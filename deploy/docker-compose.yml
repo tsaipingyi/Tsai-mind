@@ -1,0 +1,58 @@
+# One-box deployment: Postgres + Tsai Mind server. Put a TLS reverse proxy
+# (Caddy, nginx) in front of :3000 and point tsaimind.app at it.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tsaimind
+      POSTGRES_USER: tsaimind
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tsaimind"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tsaimind:${DB_PASSWORD}@db:5432/tsaimind
+      HOST: 0.0.0.0
+      PORT: "3000"
+      TZ_NAME: ${TZ_NAME:-Asia/Taipei}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      ACCOUNT_EMAIL: ${ACCOUNT_EMAIL:-owner@tsaimind.local}
+      ACCOUNT_NAME: ${ACCOUNT_NAME:-蔡}
+    ports:
+      - "3000:3000"
+
+  # Nightly dump of the database into ./backups (keeps 30 days).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c 'while true; do
+        pg_dump -h db -U tsaimind tsaimind | gzip > /backups/tsaimind-$$(date +%F).sql.gz;
+        find /backups -name "tsaimind-*.sql.gz" -mtime +30 -delete;
+        sleep 86400;
+      done'
+
+volumes:
+  pgdata:
