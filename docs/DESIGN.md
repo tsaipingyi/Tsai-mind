@@ -300,7 +300,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 
 ## 10. 分阶段路线
 
-### 第一阶段：网页替代 XMind，Claude 能读能改（约 4 周）
+### 第一阶段：网页替代 XMind，Claude 能读能改（已完成）
 
 - 新建项目：空白或贴大纲
 - 导图 + 大纲视图，XMind 同款快捷键，白底橘框
@@ -312,14 +312,14 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 
 验收：把手上的项目用贴大纲建进来，一周不再打开 XMind；在 Claude Code 里让 Claude 改一个日期、加三个子任务。
 
-### 第二阶段：iPhone、确认、草案（约 4 周）
+### 第二阶段：iPhone、确认、草案（进行中）
 
 - iPhone App（Expo，TestFlight）：今天、待确认、节点详情、改状态和进度、催办分享、导图查看
 - 待确认机制与推送，通知卡片上直接确认
 - 撤销
 - 离线队列
-- MCP：`draft_plan` / `apply_plan_batch`，草案预览页
-- 最小 OAuth（单用户），接 claude.ai 自定义连接器
+- MCP：`draft_plan` / `apply_plan_batch`，草案预览页（已完成，随第一阶段一起做了）
+- 最小 OAuth（单用户），接 claude.ai 自定义连接器（已完成）
 
 验收：Claude 在 Claude Code 里改截止日，iPhone 弹通知，卡片上点确认，网页上看到生效；让 Claude 拆一个季度计划，iPhone 上一键应用。
 

@@ -6,20 +6,21 @@
 
 ## 1. 接入方式
 
-单人使用，认证以个人访问令牌（PAT）为主：在 Tsai Mind 设置页生成一个令牌，可以起名、设到期日、设范围。
+两种认证都已实现：个人访问令牌（PAT）给 Claude Code 和 Claude Desktop 用，OAuth 2.1 给 claude.ai 网页和 iPhone 上的 Claude 用。
 
-| 入口 | 怎么接 | 阶段 |
-|---|---|---|
-| Claude Code | `claude mcp add --transport http tsai-mind https://tsaimind.app/mcp --header "Authorization: Bearer <令牌>"` | 第一阶段 |
-| Claude Desktop | 配置文件里加同一个 URL 和 header | 第一阶段 |
-| claude.ai 网页 / iPhone 上的 Claude | 设置 → 连接器 → 添加自定义连接器，需要 OAuth 授权页 | 第二阶段，做一个只有你一个用户的最小 OAuth 2.1 实现 |
-| Tsai Mind 自己的 App 内助手 | 服务端用 Claude API 调同一套工具，不经 MCP | 第三阶段 |
+| 入口 | 怎么接 |
+|---|---|
+| Claude Code | `claude mcp add --transport http tsai-mind https://tsaimind.app/mcp --header "Authorization: Bearer <令牌>"`，令牌用 `pnpm --filter @tsai-mind/server token:create --label "Claude Code"` 生成 |
+| Claude Desktop | 配置文件里加同一个 URL 和 header |
+| claude.ai 网页 / iPhone 上的 Claude | 先在服务器上 `password:set` 设一个密码，然后在 claude.ai 设置 → 连接器 → 添加自定义连接器，填 `https://tsaimind.app/mcp`。claude.ai 会自动注册客户端并弹出 Tsai Mind 的授权页，输密码、勾权限即可 |
+| Tsai Mind 自己的 App 内助手 | 服务端用 Claude API 调同一套工具，不经 MCP（第三阶段） |
 
 服务器规格：
 
-- 传输：MCP Streamable HTTP，单一端点 `/mcp`。
-- 范围（scope）：`read`、`write`、`decide`。`decide` 才能替你确认待确认项，默认不给；Claude 只提不批。
-- 令牌可随时吊销，吊销后下次请求即失效。
+- 传输：MCP Streamable HTTP，单一端点 `/mcp`。未带令牌的请求返回 401 并在 `WWW-Authenticate` 里指向 `/.well-known/oauth-protected-resource`，客户端据此发现 OAuth 流程。
+- OAuth：`/.well-known/oauth-authorization-server`、`/oauth/register`（动态注册）、`/oauth/authorize`（PKCE S256，授权页要求主人密码）、`/oauth/token`（授权码和刷新令牌，刷新令牌轮换）、`/oauth/revoke`。访问令牌 1 小时，刷新令牌 90 天。
+- 范围（scope）：`read`、`write`、`decide`。`decide` 才能替你确认待确认项和应用草案；授权页上它默认不勾，Claude 只提不批，要放开自己勾。
+- 令牌在设置页或 CLI 可随时吊销，吊销后下次请求即失效。
 
 ## 2. 三条设计原则
 
