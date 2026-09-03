@@ -94,8 +94,7 @@
 
 | 工具 | 参数 | 行为 |
 |---|---|---|
-| `create_project` | `name`, `outline?` | 新建项目，可以直接带大纲 |
-| `import_xmind` | `file`（base64） | 导入 .xmind |
+| `create_project` | `name`, `outline?` | 新建项目，可以直接带大纲；不带就是只有根节点的空白项目 |
 | `create_contact` | `name`, `company?`, `email?`, `phone?` | 新建联系人 |
 
 ## 4. 资源与提示

@@ -30,7 +30,7 @@ Tsai Mind 是你一个人用的项目管理工具。项目结构像 XMind 一样
 | 调整需要「确认」 | 没有这个概念 | Claude 或批量操作改了关键字段，先进「待确认」，你在 iPhone 上一键确认 |
 | 让 Claude 帮忙改 | 只能导出文件让 Claude 看，改完再手动搬回去 | 自带 MCP 服务器，Claude 直接读写，大改动先出草案再一键应用 |
 
-保留 XMind 的优点：一屏看全局、拖拽即重组、键盘快速录入。支持 .xmind 导入导出，老项目直接搬进来。
+保留 XMind 的优点：一屏看全局、拖拽即重组、键盘快速录入。不做 .xmind 导入，老项目用「贴大纲」或让 Claude 重建。
 
 ## 2. 你一周怎么用它
 
@@ -189,22 +189,15 @@ parent.due_date   = max(child.due_date)
 - 筛选条：负责人、状态、到期范围、标签、「待确认」、「逾期」、「该催了」，可组合、可保存为视图。
 - 命令面板（`/`）：所有操作都能打字触发。
 
-### 4.6 XMind 导入导出
+### 4.6 新建项目
 
-`.xmind` 是一个 zip，新版里面是 `content.json`，旧版是 `content.xml`。
+不做 XMind 导入。新项目三种起法：
 
-| XMind | Tsai Mind |
-|---|---|
-| sheet | project |
-| topic 树 | node 树，children 顺序转成 rank |
-| topic.title | title |
-| notes | description |
-| markers `task-*` | progress（task-start 0、task-quarter 25、task-half 50、task-3quar 75、task-done 100） |
-| markers `priority-*` | priority |
-| labels | tags |
-| 关联线 | dependency，导入后人工确认方向 |
+- **空白**：只有一个根节点，Tab 开始拆。
+- **贴大纲**：把一段缩进的 Markdown 贴进去，每行一个节点，缩进就是层级，行尾可以带 `@负责人`、日期、状态。语法和 Claude 用的大纲格式一样（见 [mcp-tools.md](mcp-tools.md)）。
+- **让 Claude 拆**：在 Claude 里说「新建一个项目叫 X，帮我拆到第三层」，Claude 用 `create_project` 带大纲建好。
 
-负责人和日期 XMind 里没有，导入后在「未分配」筛选里批量补，或者让 Claude 按大纲补。导出时把负责人和日期写进 notes 首行。
+导出只做大纲 Markdown 和 PDF 报告，不做 .xmind。
 
 ## 5. Claude 接入
 
@@ -272,8 +265,8 @@ Supabase 不再有明显优势：单用户登录很简单，MCP 用 PAT，自建
 
 ```
 GET    /projects                          项目列表
-POST   /projects/import-xmind             上传 .xmind
-GET    /projects/:id/export.xmind         导出
+POST   /projects                          {name, outline?} 空白或贴大纲
+GET    /projects/:id/export.md            导出大纲 Markdown
 GET    /projects/:id/tree                 整棵树
 GET    /projects/:id/outline              大纲格式（和 MCP get_tree 一致）
 GET    /projects/:id/ops?since=:seq       补拉操作日志
@@ -309,7 +302,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 
 ### 第一阶段：网页替代 XMind，Claude 能读能改（约 4 周）
 
-- 导入 .xmind
+- 新建项目：空白或贴大纲
 - 导图 + 大纲视图，XMind 同款快捷键，白底橘框
 - 联系人、负责人、起止日期、状态、进度，自动汇总
 - 「今天」视图
@@ -317,7 +310,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 - MCP：全部读工具、单节点写工具、PAT 认证、Claude Code 和 Claude Desktop 接入
 - 一台 VPS 部署，每日备份
 
-验收：把现有 XMind 项目导进来，一周不再打开 XMind；在 Claude Code 里让 Claude 改一个日期、加三个子任务。
+验收：把手上的项目用贴大纲建进来，一周不再打开 XMind；在 Claude Code 里让 Claude 改一个日期、加三个子任务。
 
 ### 第二阶段：iPhone、确认、草案（约 4 周）
 
@@ -336,7 +329,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 - 依赖与延误提醒
 - 按人看板
 - 网页和 iPhone 内的 Claude 对话入口，周摘要由 Claude 生成
-- 导出 .xmind
+- 导出大纲 Markdown、PDF 报告
 
 之后按需要：iOS 桌面小组件（今天到期）、Google Calendar 同步、项目模板、深色模式、让同事登录。
 
