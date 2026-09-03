@@ -10,3 +10,9 @@ coverage/
 apps/web/e2e/out/
 test-results/
 playwright-report/
+
+# mobile app (Expo)
+apps/mobile/e2e/out/
+.expo/
+dist/
+apps/mobile/expo-env.d.ts

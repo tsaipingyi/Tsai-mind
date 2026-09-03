@@ -1,0 +1,6 @@
+
+# mobile app (Expo)
+apps/mobile/e2e/out/
+.expo/
+dist/
+apps/mobile/expo-env.d.ts

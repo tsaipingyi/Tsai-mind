@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Tsai Mind",
+    "slug": "tsai-mind",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "tsaimind",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#FFFFFF",
+    "icon": "./assets/icon.png",
+    "splash": { "backgroundColor": "#FFFFFF", "resizeMode": "contain" },
+    "ios": {
+      "bundleIdentifier": "app.tsaimind.ios",
+      "supportsTablet": false,
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"],
+        "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true }
+      },
+      "entitlements": { "aps-environment": "production" }
+    },
+    "android": { "package": "app.tsaimind.android" },
+    "web": { "bundler": "metro", "output": "single", "favicon": "./assets/favicon.png" },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      ["expo-notifications", { "color": "#F26B1D" }],
+      ["expo-splash-screen", { "backgroundColor": "#FFFFFF" }]
+    ],
+    "experiments": { "typedRoutes": false },
+    "extra": {
+      "eas": { "projectId": "" }
+    }
+  }
+}
