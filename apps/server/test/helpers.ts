@@ -4,8 +4,10 @@ import { createDb, type Sql } from '../src/db.js';
 import { ensureAccount, migrate } from '../src/migrate.js';
 import { Hub } from '../src/realtime.js';
 import { buildApp } from '../src/app.js';
-import { createToken, type Scope } from '../src/auth.js';
+import { createToken, setOwnerPassword, type Scope } from '../src/auth.js';
 import type { Ctx } from '../src/service/context.js';
+import { capturingTransport, createPushSender } from '../src/push.js';
+import type { ExpoPushMessage } from 'expo-server-sdk';
 
 export const TEST_DB_URL = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/tsaimind_test';
 
@@ -17,6 +19,10 @@ export interface TestServer {
   /** Wipe all data and recreate the account row. */
   reset(): Promise<void>;
   token(scopes?: Scope[]): Promise<string>;
+  /** Set the owner password used by the OAuth authorize page. */
+  setPassword(password: string): Promise<void>;
+  /** Pushes captured by the injected transport (cleared by reset()). */
+  pushes: ExpoPushMessage[];
   /** JSON request helper with bearer auth. */
   api<T = unknown>(method: string, path: string, opts?: { body?: unknown; token?: string | null; raw?: boolean }): Promise<{ status: number; body: T }>;
   close(): Promise<void>;
@@ -26,7 +32,8 @@ export async function startTestServer(): Promise<TestServer> {
   const config = { ...loadConfig(), databaseUrl: TEST_DB_URL, port: 0, host: '127.0.0.1', tzName: 'Asia/Taipei' };
   const sql = createDb(config.databaseUrl);
   await migrate(sql);
-  const ctx: Ctx = { sql, hub: new Hub(), config, log: console };
+  const capture = capturingTransport();
+  const ctx: Ctx = { sql, hub: new Hub(), config, log: { info: () => {}, warn: () => {}, error: () => {} }, push: createPushSender({ transport: capture.transport, log: { info: () => {}, warn: () => {}, error: () => {} } }) };
   const app = await buildApp(ctx, { logger: false });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -35,8 +42,9 @@ export async function startTestServer(): Promise<TestServer> {
   ctx.config.publicUrl = baseUrl;
 
   const reset = async () => {
-    await sql`truncate table activity, op, change, note, dependency, plan_batch, notification, device, node, project, contact, access_token, account restart identity cascade`;
+    await sql`truncate table activity, op, change, note, dependency, plan_batch, notification, device, node, project, contact, access_token, oauth_refresh_token, oauth_code, oauth_client, account restart identity cascade`;
     await ensureAccount(sql, config.accountEmail, config.accountName, config.tzName);
+    capture.reset();
   };
   let defaultToken: string | null = null;
   const token = async (scopes: Scope[] = ['read', 'write', 'decide']) => (await createToken(sql, { label: 'test', scopes })).token;
@@ -61,6 +69,8 @@ export async function startTestServer(): Promise<TestServer> {
   };
   return {
     app, ctx, sql, baseUrl, reset, token, api,
+    setPassword: (password: string) => setOwnerPassword(sql, password),
+    pushes: capture.messages,
     close: async () => {
       await app.close();
       await sql.end();

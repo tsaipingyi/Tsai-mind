@@ -1,6 +1,7 @@
 import type { Sql } from '../db.js';
 import type { Config } from '../config.js';
 import type { Hub } from '../realtime.js';
+import type { PushSender } from '../push.js';
 import { toISODate } from '@tsai-mind/core';
 
 export interface Logger {
@@ -14,6 +15,8 @@ export interface Ctx {
   hub: Hub;
   config: Config;
   log: Logger;
+  /** Push sender for owner notifications (tests inject a capturing transport). */
+  push: PushSender;
 }
 
 export const nowIso = (): string => new Date().toISOString();

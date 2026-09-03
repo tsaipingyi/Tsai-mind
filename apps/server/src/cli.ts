@@ -1,6 +1,7 @@
 import { createDb } from './db.js';
 import { loadConfig } from './config.js';
-import { createToken, listTokens, revokeToken, type Scope } from './auth.js';
+import { createInterface } from 'node:readline/promises';
+import { createToken, listTokens, revokeToken, setOwnerPassword, type Scope } from './auth.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -10,7 +11,23 @@ function arg(name: string): string | undefined {
 const usage = `usage:
   token:create --label "Claude Code" [--scopes read,write,decide] [--expires 2027-01-01]
   token:list
-  token:revoke <id>`;
+  token:revoke <id>
+  password:set [--password <pw>]     owner password for the OAuth authorize page (prompts when omitted)`;
+
+/** Read a line from the terminal without echoing it. */
+async function promptHidden(label: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const mutable = rl as unknown as { _writeToOutput: (s: string) => void };
+  process.stdout.write(label);
+  mutable._writeToOutput = () => {};
+  try {
+    const v = await rl.question('');
+    process.stdout.write('\n');
+    return v;
+  } finally {
+    rl.close();
+  }
+}
 
 async function main() {
   const cmd = process.argv[2];
@@ -40,6 +57,17 @@ async function main() {
         const id = process.argv[3];
         if (!id) throw new Error('token id is required');
         console.log((await revokeToken(sql, id)) ? `revoked ${id}` : `no active token with id ${id}`);
+        break;
+      }
+      case 'password:set': {
+        let password = arg('--password');
+        if (!password) {
+          password = await promptHidden('New password: ');
+          const again = await promptHidden('Repeat: ');
+          if (password !== again) throw new Error('passwords do not match');
+        }
+        await setOwnerPassword(sql, password);
+        console.log('owner password set');
         break;
       }
       default:

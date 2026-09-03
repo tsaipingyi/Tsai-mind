@@ -1,0 +1,152 @@
+/**
+ * Minute ticker in TZ_NAME: 09:00 daily summary (+ nudge reminder), Monday 08:00 weekly digest.
+ * Each run is recorded in `notification` with the local date in its payload, so a restart within the
+ * same minute (or a manual re-run) never double-sends.
+ */
+import { addDays, computeRollup } from '@tsai-mind/core';
+import { alreadySent, notificationToggles, notify } from './notify.js';
+import type { Ctx } from './service/context.js';
+import { todayIso } from './service/context.js';
+import { getToday } from './service/queries.js';
+import { loadAccount, loadProjects, loadStore } from './service/store.js';
+
+export interface LocalClock {
+  date: string;
+  hour: number;
+  minute: number;
+  /** 0 = Sunday … 6 = Saturday */
+  weekday: number;
+}
+
+export function localClock(at: Date, timeZone: string): LocalClock {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short' }).formatToParts(at);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    hour: Number(get('hour')) % 24,
+    minute: Number(get('minute')),
+    weekday: weekdays.indexOf(get('weekday')),
+  };
+}
+
+export interface RunResult {
+  date: string;
+  sent: string[];
+  skipped: string[];
+}
+
+/** 09:00: "今天到期 n 项、逾期 m 项" (+ 明天) and "该催了：…". */
+export async function runDaily(ctx: Ctx, opts: { date?: string } = {}): Promise<RunResult> {
+  const date = opts.date ?? todayIso(ctx);
+  const toggles = notificationToggles((await loadAccount(ctx.sql)).settings);
+  const today = await getToday(ctx);
+  const res: RunResult = { date, sent: [], skipped: [] };
+
+  if (toggles.dueSoon || toggles.overdue) {
+    if (await alreadySent(ctx, 'due_summary', date)) res.skipped.push('due_summary');
+    else {
+      const lines: string[] = [];
+      const parts: string[] = [];
+      if (toggles.dueSoon && today.dueToday.length) parts.push(`今天到期 ${today.dueToday.length} 项`);
+      if (toggles.overdue && today.overdue.length) parts.push(`逾期 ${today.overdue.length} 项`);
+      if (parts.length) lines.push(parts.join('、'));
+      if (toggles.dueSoon && today.dueTomorrow.length) lines.push(`明天到期 ${today.dueTomorrow.length} 项`);
+      if (lines.length) {
+        const items = [...(toggles.dueSoon ? today.dueToday : []), ...(toggles.overdue ? today.overdue : [])];
+        const nodeIds = items.map((i) => i.node.id);
+        await notify(ctx, {
+          kind: 'due_summary', title: '今天', body: lines.join('\n'),
+          nodeId: nodeIds.length === 1 ? nodeIds[0]! : null, projectId: nodeIds.length === 1 ? items[0]!.projectId : null,
+          payload: { date, dueToday: today.dueToday.length, overdue: today.overdue.length, dueTomorrow: today.dueTomorrow.length, nodeIds },
+          collapseId: `due:${date}`,
+        });
+        res.sent.push('due_summary');
+      }
+    }
+  } else res.skipped.push('due_summary');
+
+  if (toggles.nudgeDue) {
+    if (await alreadySent(ctx, 'nudge_due', date)) res.skipped.push('nudge_due');
+    else if (today.nudgeDue.length) {
+      const titles = today.nudgeDue.map((i) => i.node.title);
+      const shown = titles.slice(0, 5).join('、') + (titles.length > 5 ? ` 等 ${titles.length} 项` : '');
+      await notify(ctx, {
+        kind: 'nudge_due', title: '该催了', body: `该催了：${shown}`,
+        nodeId: today.nudgeDue[0]!.node.id, projectId: today.nudgeDue[0]!.projectId,
+        payload: { date, nodeIds: today.nudgeDue.map((i) => i.node.id), count: titles.length },
+        collapseId: `nudge:${date}`,
+      });
+      res.sent.push('nudge_due');
+    }
+  } else res.skipped.push('nudge_due');
+
+  return res;
+}
+
+/** Monday 08:00: "本周到期 n、逾期 m、待确认 k". */
+export async function runWeekly(ctx: Ctx, opts: { date?: string } = {}): Promise<RunResult> {
+  const date = opts.date ?? todayIso(ctx);
+  const res: RunResult = { date, sent: [], skipped: [] };
+  const toggles = notificationToggles((await loadAccount(ctx.sql)).settings);
+  if (!toggles.digest || (await alreadySent(ctx, 'digest', date))) {
+    res.skipped.push('digest');
+    return res;
+  }
+  // Week = Monday … Sunday containing `date`.
+  const dow = localClock(new Date(`${date}T12:00:00Z`), 'UTC').weekday;
+  const monday = addDays(date, dow === 0 ? -6 : 1 - dow);
+  const sunday = addDays(monday, 6);
+  let dueThisWeek = 0;
+  for (const p of await loadProjects(ctx.sql)) {
+    const store = await loadStore(ctx.sql, p.id);
+    const derived = computeRollup(store);
+    for (const n of store.all()) {
+      const d = derived.get(n.id);
+      if (!d || d.hasChildren || n.kind === 'note' || d.status === 'done' || !d.dueDate) continue;
+      if (d.dueDate >= monday && d.dueDate <= sunday) dueThisWeek++;
+    }
+  }
+  const today = await getToday(ctx);
+  await notify(ctx, {
+    kind: 'digest', title: '本周', body: `本周到期 ${dueThisWeek}、逾期 ${today.overdue.length}、待确认 ${today.pending.length}`,
+    payload: { date, weekStart: monday, weekEnd: sunday, dueThisWeek, overdue: today.overdue.length, pending: today.pending.length },
+    collapseId: `digest:${monday}`,
+  });
+  res.sent.push('digest');
+  return res;
+}
+
+export interface Scheduler {
+  stop(): void;
+  /** Run whatever is due at `at` (exposed for tests). */
+  tick(at?: Date): Promise<void>;
+}
+
+export function startScheduler(ctx: Ctx, opts: { intervalMs?: number; daily?: { hour: number; minute: number }; weekly?: { weekday: number; hour: number; minute: number } } = {}): Scheduler {
+  const daily = opts.daily ?? { hour: 9, minute: 0 };
+  const weekly = opts.weekly ?? { weekday: 1, hour: 8, minute: 0 };
+  let running = false;
+  const tick = async (at: Date = new Date()) => {
+    if (running) return;
+    running = true;
+    try {
+      const c = localClock(at, ctx.config.tzName);
+      if (c.hour === daily.hour && c.minute === daily.minute) {
+        const r = await runDaily(ctx, { date: c.date });
+        if (r.sent.length) ctx.log.info({ date: c.date, sent: r.sent }, 'scheduler: daily notifications sent');
+      }
+      if (c.weekday === weekly.weekday && c.hour === weekly.hour && c.minute === weekly.minute) {
+        const r = await runWeekly(ctx, { date: c.date });
+        if (r.sent.length) ctx.log.info({ date: c.date, sent: r.sent }, 'scheduler: weekly digest sent');
+      }
+    } catch (err) {
+      ctx.log.error(err, 'scheduler: tick failed');
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(() => void tick(), opts.intervalMs ?? 60_000);
+  timer.unref();
+  return { stop: () => clearInterval(timer), tick };
+}

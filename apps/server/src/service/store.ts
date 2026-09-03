@@ -61,10 +61,19 @@ export function depsByNode(deps: Dependency[]): Map<string, string[]> {
   return m;
 }
 
+export interface NotificationToggles {
+  dueSoon?: boolean;
+  overdue?: boolean;
+  nudgeDue?: boolean;
+  digest?: boolean;
+}
+
 export interface AccountSettings {
   requireConfirmation?: boolean;
   keyFields?: KeyField[];
   nudgeTemplate?: string;
+  /** Push toggles (DESIGN §4.4); change / batch / dependency pushes cannot be turned off. */
+  notifications?: NotificationToggles;
 }
 
 export interface Account {
@@ -73,13 +82,14 @@ export interface Account {
   name: string;
   timezone: string;
   settings: AccountSettings;
+  hasPassword: boolean;
 }
 
 export async function loadAccount(db: Db): Promise<Account> {
   const rows = await db`select * from account limit 1`;
   const r = rows[0];
   if (!r) throw new Error('no account row; run migrate');
-  return { id: r.id as string, email: r.email as string, name: r.name as string, timezone: r.timezone as string, settings: (r.settings as AccountSettings) ?? {} };
+  return { id: r.id as string, email: r.email as string, name: r.name as string, timezone: r.timezone as string, settings: (r.settings as AccountSettings) ?? {}, hasPassword: !!r.password_hash };
 }
 
 export function confirmationSettings(s: AccountSettings): ConfirmationSettings {

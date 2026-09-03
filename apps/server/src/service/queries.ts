@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  addDays,
   computeRollup,
   computeToday,
   firstRank,
@@ -351,6 +352,33 @@ export async function nudge(ctx: Ctx, nodeId: string, opts: { template?: string;
   const r = outcome.results[0]!;
   if (!r.ok) throw new HttpError(409, r.error ?? 'apply_failed', r.message ?? 'could not record nudge');
   return { text, node: r.node! };
+}
+
+// ---------- notification actions (done / postpone) ----------
+
+async function applyUserPatch(ctx: Ctx, projectId: string, nodeId: string, patch: Record<string, unknown>): Promise<TNode> {
+  const outcome = await applyOps(ctx, projectId, [
+    { opId: randomUUID(), clientId: 'server', projectId, actor: 'user', at: nowIso(), type: 'update_node', nodeId, patch: patch as never },
+  ]);
+  const r = outcome.results[0]!;
+  if (!r.ok) throw new HttpError(r.error === 'invalid' ? 400 : 409, r.error ?? 'apply_failed', r.message ?? 'could not update node');
+  return r.node!;
+}
+
+export async function markDone(ctx: Ctx, nodeId: string): Promise<{ node: TNode }> {
+  const { project } = await locateNode(ctx, nodeId);
+  return { node: await applyUserPatch(ctx, project.id, nodeId, { status: 'done' }) };
+}
+
+/** Push the due date back by `days`. Parents whose dates roll up from children cannot be postponed directly. */
+export async function postponeNode(ctx: Ctx, nodeId: string, days = 1): Promise<{ node: TNode; from: string; to: string }> {
+  const { project, store, node } = await locateNode(ctx, nodeId);
+  const derived = computeRollup(store).get(nodeId)!;
+  if (derived.hasChildren && node.dateMode === 'auto') throw badRequest('这个节点的日期由子节点汇总而来，请推迟具体的子任务');
+  const from = node.dueDate ?? derived.dueDate;
+  if (!from) throw badRequest('这个节点没有截止日');
+  const to = addDays(from, days);
+  return { node: await applyUserPatch(ctx, project.id, nodeId, { dueDate: to }), from, to };
 }
 
 // ---------- notes & dependencies ----------

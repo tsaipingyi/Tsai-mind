@@ -10,8 +10,11 @@ import { approveChange, listChanges, rejectChange } from './service/changes.js';
 import { applyPlanBatch, discardPlanBatch, draftPlan, getPlanBatch, listPlanBatches } from './service/plans.js';
 import * as q from './service/queries.js';
 import { loadAccount } from './service/store.js';
-import { contactInput, opsBody, planMode, uuid } from './schemas.js';
+import { contactInput, isoDate, opsBody, planMode, uuid } from './schemas.js';
 import { registerMcp } from './mcp.js';
+import { registerOAuth } from './oauth.js';
+import { deleteDevice, listDevices, listNotifications, markNotificationRead, upsertDevice } from './notify.js';
+import { runDaily, runWeekly } from './scheduler.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -45,7 +48,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
     const token = bearerFrom(request.headers.authorization) ?? (url.startsWith('/api/realtime') ? fromQuery : undefined);
     const auth = await authenticate(ctx.sql, token);
     if (!auth) {
-      if (url.startsWith('/mcp')) reply.header('WWW-Authenticate', 'Bearer realm="tsai-mind"');
+      // RFC 9728 / MCP authorization: point clients at the protected-resource metadata so they can discover the OAuth flow.
+      const metadata = `${ctx.config.publicUrl.replace(/\/+$/, '')}/.well-known/oauth-protected-resource`;
+      reply.header('WWW-Authenticate', `Bearer realm="tsai-mind", resource_metadata="${metadata}"`);
       throw new HttpError(401, 'unauthorized', 'missing or invalid token');
     }
     request.auth = auth;
@@ -70,7 +75,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
   // ---- me / tokens ----
   app.get('/api/me', async (request) => {
     const account = await loadAccount(ctx.sql);
-    return { account, scopes: request.auth.scopes };
+    return { account, scopes: request.auth.scopes, tokenKind: request.auth.kind };
   });
   app.get('/api/tokens', async () => listTokens(ctx.sql));
 
@@ -139,6 +144,11 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
     const body = parse(z.object({ template: z.string().optional() }).default({}), request.body ?? {});
     return q.nudge(ctx, parse(idParam, request.params).id, { template: body.template, actor: 'user' });
   });
+  app.post('/api/nodes/:id/done', async (request) => q.markDone(ctx, parse(idParam, request.params).id));
+  app.post('/api/nodes/:id/postpone', async (request) => {
+    const body = parse(z.object({ days: z.number().int().min(1).max(365).default(1) }).default({}), request.body ?? {});
+    return q.postponeNode(ctx, parse(idParam, request.params).id, body.days);
+  });
   app.get('/api/search', async (request) => {
     const f = parse(
       z.object({
@@ -203,6 +213,28 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
   app.post('/api/plan-batches/:id/apply', { config: { scope: 'decide' } }, async (request) => applyPlanBatch(ctx, parse(idParam, request.params).id));
   app.post('/api/plan-batches/:id/discard', async (request) => discardPlanBatch(ctx, parse(idParam, request.params).id));
 
+  // ---- devices (push registration from the iPhone app) ----
+  app.get('/api/devices', async () => listDevices(ctx.sql));
+  app.post('/api/devices', async (request, reply) => {
+    const body = parse(z.object({ platform: z.enum(['ios', 'web']).default('ios'), pushToken: z.string().min(1), name: z.string().nullable().optional() }), request.body);
+    return reply.status(201).send(await upsertDevice(ctx.sql, body));
+  });
+  app.delete('/api/devices/:id', async (request) => {
+    await deleteDevice(ctx.sql, parse(idParam, request.params).id);
+    return { ok: true };
+  });
+
+  // ---- notifications ----
+  app.get('/api/notifications', async (request) => {
+    const { unread, limit } = parse(z.object({ unread: z.string().optional(), limit: z.coerce.number().int().optional() }), request.query);
+    return listNotifications(ctx, { unread: unread === '1' || unread === 'true', limit });
+  });
+  app.post('/api/notifications/:id/read', async (request) => markNotificationRead(ctx, parse(idParam, request.params).id));
+  app.post('/api/notifications/run', { config: { scope: 'decide' } }, async (request) => {
+    const { kind, date } = parse(z.object({ kind: z.enum(['daily', 'weekly']), date: isoDate.optional() }), request.query);
+    return kind === 'daily' ? runDaily(ctx, { date }) : runWeekly(ctx, { date });
+  });
+
   // ---- realtime ----
   app.get('/api/realtime', { websocket: true }, (socket, request: FastifyRequest) => {
     ctx.hub.add(socket);
@@ -216,6 +248,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
       }
     });
   });
+
+  // ---- OAuth 2.1 (claude.ai / Claude iOS custom connectors) ----
+  registerOAuth(app, ctx);
 
   // ---- MCP ----
   await registerMcp(app, ctx);

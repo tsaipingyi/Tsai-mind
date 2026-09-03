@@ -7,6 +7,10 @@ export interface Config {
   accountEmail: string;
   accountName: string;
   corsOrigins: string[];
+  /** Optional Expo push access token (Expo dashboard → Access tokens); pushes work without it. */
+  expoAccessToken: string | undefined;
+  /** Set to false to disable the 09:00 / Monday 08:00 scheduler (tests). */
+  scheduler: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -23,5 +27,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    expoAccessToken: env.EXPO_ACCESS_TOKEN || undefined,
+    scheduler: env.SCHEDULER !== 'off',
   };
 }

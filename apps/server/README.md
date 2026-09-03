@@ -50,6 +50,45 @@ claude mcp add --transport http tsai-mind http://127.0.0.1:3000/mcp \
 
 Claude Desktop 在配置里加同一个 URL 和 header。工具清单见 [docs/mcp-tools.md](docs/mcp-tools.md)。Claude 改截止日、开始日、负责人、删除、标记完成会进「待确认」，其他直接生效。
 
+### claude.ai 网页 / iPhone 上的 Claude（自定义连接器，OAuth）
+
+claude.ai 的自定义连接器不能填 header，走的是 OAuth 2.1。服务器自带一个只有你一个用户的授权服务器（`src/oauth.ts`）：动态注册（RFC 7591）、授权码 + PKCE、刷新令牌轮换、吊销，以及 `/.well-known/oauth-protected-resource` 和 `/.well-known/oauth-authorization-server` 两个发现端点。
+
+```bash
+# 1. PUBLIC_URL 必须是外网可访问的 https 源（反代前面那个），claude.ai 会用它做 issuer 和回调发现
+export PUBLIC_URL=https://tsaimind.example.com
+
+# 2. 设一个授权页用的密码（交互式提示；脚本里可以加 --password）
+pnpm --filter @tsai-mind/server password:set
+
+# 3. 起服务，然后在 claude.ai → 设置 → 连接器 → 添加自定义连接器，URL 填
+#    https://tsaimind.example.com/mcp
+```
+
+claude.ai 会自己注册客户端，然后跳到 `/oauth/authorize`：页面上显示客户端名、三个范围的勾选框（`decide`「允许替我确认变更」默认不勾）和密码框，输入密码点「允许」即可。签出的访问令牌 1 小时过期、刷新令牌 90 天，`GET /api/tokens` 里能看到（`kind: oauth`，带客户端名），`POST /oauth/revoke` 或 `token:revoke` 可以随时吊销。没设密码时授权页会拒绝并提示。
+
+## 推送到 iPhone
+
+`src/push.ts` 用 Expo 推送服务发通知（`EXPO_ACCESS_TOKEN` 可选）。App 拿到 Expo push token 后注册设备：
+
+```
+POST   /api/devices        {platform:"ios", pushToken:"ExponentPushToken[...]", name?}   按 pushToken 去重
+GET    /api/devices
+DELETE /api/devices/:id
+```
+
+每条推送都带 `data: {kind, nodeId?, changeId?, batchId?, projectId?, notificationId}` 和 `categoryId`，App 按类别挂通知动作：
+
+| categoryId | 什么时候 | 卡片动作 → 调用 |
+|---|---|---|
+| `change` | Claude 提议改关键字段（每个节点一条） | 确认 / 拒绝 → `POST /api/changes/:id/approve` / `reject` |
+| `batch` | Claude 生成草案 | 打开预览 |
+| `due` | 每天 09:00 「今天到期 n 项、逾期 m 项」 | 完成 / 推迟一天 → `POST /api/nodes/:id/done` / `postpone {days}` |
+| `nudge` | 每天 09:00 「该催了：…」 | 打开 |
+| `digest` | 周一 08:00 「本周到期 n、逾期 m、待确认 k」 | 打开 |
+
+定时任务（`src/scheduler.ts`）每分钟按 `TZ_NAME` 检查一次，发过的会记在 `notification` 表（kind + 日期），重启不会重发。`account.settings.notifications` 里 `dueSoon` / `overdue` / `nudgeDue` / `digest` 四个开关默认开；变更和草案的推送不能关。手动触发：`POST /api/notifications/run?kind=daily|weekly`（需要 `decide` 范围）。`GET /api/notifications?unread=1`、`POST /api/notifications/:id/read` 给 App 读列表和标已读。
+
 ## 部署
 
 `deploy/docker-compose.yml`：Postgres + server + 每日备份。复制 `deploy/.env.example` 为 `deploy/.env` 填好后 `docker compose -f deploy/docker-compose.yml up -d`，前面放一个 TLS 反代。

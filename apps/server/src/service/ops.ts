@@ -15,6 +15,7 @@ import type { Ctx } from './context.js';
 import { nowIso, withProjectLock } from './context.js';
 import { confirmationSettings, insertActivity, loadAccount, loadStore, persistNodes } from './store.js';
 import type { RealtimeMessage } from '../realtime.js';
+import { notifyPendingChanges } from '../notify.js';
 
 export interface OpResult {
   opId: string;
@@ -103,6 +104,8 @@ export async function applyOps(ctx: Ctx, projectId: string, ops: Op[], opts: App
   return withProjectLock(projectId, async () => {
     const outcome = await ctx.sql.begin(async (tx) => applyInTx(tx, projectId, ops, opts));
     for (const m of outcome.messages) ctx.hub.broadcast(m);
+    // Newly proposed changes (Claude touching key fields) go to the owner's phone, one push per node.
+    if (outcome.changes.length) await notifyPendingChanges(ctx, projectId, outcome.changes, opts.reason ?? null).catch((err) => ctx.log.error(err, 'notify: change push failed'));
     return { results: outcome.results, serverSeq: outcome.serverSeq, changes: outcome.changes };
   });
 }

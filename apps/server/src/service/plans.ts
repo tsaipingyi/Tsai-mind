@@ -6,6 +6,7 @@ import { rowToPlanBatch, type PlanBatchRow } from '../mapping.js';
 import { HttpError, badRequest, notFound } from '../errors.js';
 import { applyInTx, type OpResult } from './ops.js';
 import { insertActivity, loadContacts, loadStore } from './store.js';
+import { notifyPlanDrafted } from '../notify.js';
 
 export interface PlanDiff extends PlanResult {
   actor: Actor;
@@ -60,6 +61,7 @@ export async function draftPlan(
     returning *`;
   const batch = withPreview(ctx, rowToPlanBatch(rows[0]!));
   ctx.hub.broadcast({ type: 'batch', batch });
+  if (input.actor === 'claude') await notifyPlanDrafted(ctx, batch).catch((err) => ctx.log.error(err, 'notify: batch push failed'));
   return batch;
 }
 
