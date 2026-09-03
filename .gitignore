@@ -7,3 +7,6 @@ dist/
 .DS_Store
 .pgdata/
 coverage/
+apps/web/e2e/out/
+test-results/
+playwright-report/
