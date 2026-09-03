@@ -163,3 +163,69 @@ returns setof node language sql stable as $$
   )
   select * from t;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Claude 接入相关（见 docs/mcp-tools.md）
+-- ---------------------------------------------------------------------------
+
+create type actor_type as enum ('user', 'agent', 'system');
+
+-- op / comment / notification 记录操作来源：用户直接操作、经 Claude、系统自动
+alter table op      add column actor_type actor_type not null default 'user';
+alter table comment add column actor_type actor_type not null default 'user';
+
+-- 活动流（导图侧栏和周会摘要读这张表）
+create table activity (
+  id          bigserial primary key,
+  project_id  uuid not null references project(id),
+  node_id     uuid references node(id),
+  actor_id    uuid not null references member(id),
+  actor_type  actor_type not null default 'user',
+  kind        text not null,          -- node_created / field_changed / moved / assigned / change_proposed / change_decided / plan_applied ...
+  payload     jsonb not null default '{}',
+  created_at  timestamptz not null default now()
+);
+create index activity_project_idx on activity(project_id, created_at desc);
+create index activity_node_idx    on activity(node_id, created_at desc);
+
+-- OAuth 客户端（claude.ai / Claude Code 动态注册产生）
+create table oauth_client (
+  id            text primary key,     -- client_id
+  name          text not null,
+  redirect_uris text[] not null,
+  created_at    timestamptz not null default now()
+);
+
+-- 访问令牌：OAuth 授权得到的，或用户手动生成的个人访问令牌
+create table access_token (
+  id          uuid primary key default gen_random_uuid(),
+  member_id   uuid not null references member(id),
+  client_id   text references oauth_client(id),   -- null 表示个人访问令牌
+  token_hash  text not null unique,
+  scopes      text[] not null,                    -- read / write / decide
+  label       text,                               -- 用户给 PAT 起的名字
+  expires_at  timestamptz,
+  last_used_at timestamptz,
+  revoked_at  timestamptz,
+  created_at  timestamptz not null default now()
+);
+create index access_token_member_idx on access_token(member_id) where revoked_at is null;
+
+-- 草案批次：Claude 批量改动先落这里，用户确认后才应用
+create type plan_batch_status as enum ('draft', 'applied', 'discarded');
+
+create table plan_batch (
+  id          uuid primary key default gen_random_uuid(),
+  project_id  uuid not null references project(id),
+  parent_id   uuid not null references node(id),
+  mode        text not null check (mode in ('append', 'sync', 'replace')),
+  outline     text not null,          -- Claude 提交的原始大纲
+  diff        jsonb not null,         -- 解析后的 create / update / delete 列表
+  created_by  uuid not null references member(id),
+  actor_type  actor_type not null default 'agent',
+  status      plan_batch_status not null default 'draft',
+  applied_at  timestamptz,
+  result      jsonb,                  -- 应用结果：直接生效的、变成提案的、失败的
+  created_at  timestamptz not null default now()
+);
+create index plan_batch_open_idx on plan_batch(project_id) where status = 'draft';
