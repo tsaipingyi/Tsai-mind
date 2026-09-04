@@ -15,6 +15,8 @@ import { registerMcp } from './mcp.js';
 import { registerOAuth } from './oauth.js';
 import { deleteDevice, listDevices, listNotifications, markNotificationRead, upsertDevice } from './notify.js';
 import { runDaily, runWeekly } from './scheduler.js';
+import { registerAssistant } from './assistant/routes.js';
+import { updateAccount } from './service/store.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -75,6 +77,33 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
   // ---- me / tokens ----
   app.get('/api/me', async (request) => {
     const account = await loadAccount(ctx.sql);
+    return { account, scopes: request.auth.scopes, tokenKind: request.auth.kind };
+  });
+  app.patch('/api/me', async (request) => {
+    const keyField = z.enum(['dueDate', 'startDate', 'ownerId', 'delete', 'status_done']);
+    const body = parse(
+      z.object({
+        name: z.string().min(1).optional(),
+        timezone: z.string().min(1).optional(),
+        settings: z
+          .object({
+            notifications: z.object({ dueSoon: z.boolean().optional(), overdue: z.boolean().optional(), nudgeDue: z.boolean().optional(), digest: z.boolean().optional() }).optional(),
+            nudgeTemplate: z.string().nullable().optional(),
+            keyFields: z.array(keyField).optional(),
+            requireConfirmation: z.boolean().optional(),
+          })
+          .optional(),
+      }),
+      request.body,
+    );
+    if (body.timezone) {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: body.timezone });
+      } catch {
+        throw badRequest(`unknown timezone ${body.timezone}`);
+      }
+    }
+    const account = await updateAccount(ctx.sql, body);
     return { account, scopes: request.auth.scopes, tokenKind: request.auth.kind };
   });
   app.get('/api/tokens', async () => listTokens(ctx.sql));
@@ -248,6 +277,9 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
       }
     });
   });
+
+  // ---- in-app Claude assistant ----
+  registerAssistant(app, ctx);
 
   // ---- OAuth 2.1 (claude.ai / Claude iOS custom connectors) ----
   registerOAuth(app, ctx);

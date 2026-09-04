@@ -8,7 +8,8 @@ import { alreadySent, notificationToggles, notify } from './notify.js';
 import type { Ctx } from './service/context.js';
 import { todayIso } from './service/context.js';
 import { getToday } from './service/queries.js';
-import { loadAccount, loadProjects, loadStore } from './service/store.js';
+import { loadAccount, loadContacts, loadProjects, loadStore } from './service/store.js';
+import { textOf } from './assistant/client.js';
 
 export interface LocalClock {
   date: string;
@@ -84,7 +85,79 @@ export async function runDaily(ctx: Ctx, opts: { date?: string } = {}): Promise<
   return res;
 }
 
-/** Monday 08:00: "本周到期 n、逾期 m、待确认 k". */
+/** Compact picture of the week that the digest is written from. */
+export interface WeekSummary {
+  today: string;
+  weekStart: string;
+  weekEnd: string;
+  overdue: { project: string; title: string; owner: string; due: string; daysOverdue: number; progress: number }[];
+  dueThisWeek: { project: string; title: string; owner: string; due: string; progress: number }[];
+  pending: { project: string; title: string; field: string; from: unknown; to: unknown }[];
+  nudgeDue: { project: string; title: string; owner: string; due: string | null }[];
+  completedLastWeek: number;
+}
+
+export async function summarizeWeek(ctx: Ctx, date: string): Promise<WeekSummary> {
+  // Week = Monday … Sunday containing `date`.
+  const dow = localClock(new Date(`${date}T12:00:00Z`), 'UTC').weekday;
+  const monday = addDays(date, dow === 0 ? -6 : 1 - dow);
+  const sunday = addDays(monday, 6);
+  const account = await loadAccount(ctx.sql);
+  const contacts = await loadContacts(ctx.sql, { includeArchived: true });
+  const ownerName = (id: string | null) => (id ? (contacts.find((c) => c.id === id)?.name ?? '?') : account.name);
+  const dueThisWeek: WeekSummary['dueThisWeek'] = [];
+  for (const p of await loadProjects(ctx.sql)) {
+    const store = await loadStore(ctx.sql, p.id);
+    const derived = computeRollup(store);
+    for (const n of store.all()) {
+      const d = derived.get(n.id);
+      if (!d || d.hasChildren || n.kind === 'note' || d.status === 'done' || !d.dueDate) continue;
+      if (d.dueDate >= monday && d.dueDate <= sunday) dueThisWeek.push({ project: p.name, title: n.title, owner: ownerName(n.ownerId), due: d.dueDate, progress: d.progress });
+    }
+  }
+  dueThisWeek.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+  const today = await getToday(ctx);
+  const doneRows = await ctx.sql`
+    select count(*)::int as n from activity
+    where kind = 'field_changed' and payload->'fields'->'status'->>'to' = 'done' and created_at >= now() - interval '7 days'`;
+  return {
+    today: date,
+    weekStart: monday,
+    weekEnd: sunday,
+    overdue: today.overdue.map((i) => ({ project: i.projectName, title: i.node.title, owner: ownerName(i.node.ownerId), due: i.derived.dueDate!, daysOverdue: i.daysOverdue, progress: i.derived.progress })),
+    dueThisWeek,
+    pending: today.pending.map((c) => ({ project: c.projectName, title: c.nodeTitle, field: c.field, from: c.oldValue, to: c.newValue })),
+    nudgeDue: today.nudgeDue.map((i) => ({ project: i.projectName, title: i.node.title, owner: ownerName(i.node.ownerId), due: i.derived.dueDate })),
+    completedLastWeek: Number(doneRows[0]?.n ?? 0),
+  };
+}
+
+const DIGEST_SYSTEM =
+  '你是 Tsai Mind 的助手。根据用户给的一周 JSON（逾期、本周到期、待确认、该催办、上周完成数）写一条周一早上的推送正文，简体中文，纯文本不用 Markdown，200 字以内，分 3–5 行：先一句总览（上周完成几项、本周到期几项、逾期几项、待确认几项），再点名最要紧的逾期和本周到期事项（带负责人和日期，日期写成 M/D），最后一行给一个本周最该先做的建议。没有的类别就不提，不要编造。';
+
+const templateDigest = (w: WeekSummary): string => `本周到期 ${w.dueThisWeek.length}、逾期 ${w.overdue.length}、待确认 ${w.pending.length}`;
+
+/** Ask Claude for the digest text; null when unconfigured, refused, empty or failing (caller falls back to the template). */
+export async function writeDigestWithClaude(ctx: Ctx, week: WeekSummary): Promise<string | null> {
+  if (!ctx.anthropic) return null;
+  try {
+    const msg = await ctx.anthropic.create({
+      model: ctx.config.assistantModel,
+      max_tokens: 600,
+      effort: 'low',
+      system: DIGEST_SYSTEM,
+      messages: [{ role: 'user', content: JSON.stringify(week) }],
+    });
+    if (msg.stop_reason === 'refusal') return null;
+    const text = textOf(msg).trim();
+    return text || null;
+  } catch (err) {
+    ctx.log.error(err, 'digest: Claude call failed, using the template');
+    return null;
+  }
+}
+
+/** Monday 08:00: the weekly digest — written by Claude when configured, otherwise "本周到期 n、逾期 m、待确认 k". */
 export async function runWeekly(ctx: Ctx, opts: { date?: string } = {}): Promise<RunResult> {
   const date = opts.date ?? todayIso(ctx);
   const res: RunResult = { date, sent: [], skipped: [] };
@@ -93,25 +166,17 @@ export async function runWeekly(ctx: Ctx, opts: { date?: string } = {}): Promise
     res.skipped.push('digest');
     return res;
   }
-  // Week = Monday … Sunday containing `date`.
-  const dow = localClock(new Date(`${date}T12:00:00Z`), 'UTC').weekday;
-  const monday = addDays(date, dow === 0 ? -6 : 1 - dow);
-  const sunday = addDays(monday, 6);
-  let dueThisWeek = 0;
-  for (const p of await loadProjects(ctx.sql)) {
-    const store = await loadStore(ctx.sql, p.id);
-    const derived = computeRollup(store);
-    for (const n of store.all()) {
-      const d = derived.get(n.id);
-      if (!d || d.hasChildren || n.kind === 'note' || d.status === 'done' || !d.dueDate) continue;
-      if (d.dueDate >= monday && d.dueDate <= sunday) dueThisWeek++;
-    }
-  }
-  const today = await getToday(ctx);
+  const week = await summarizeWeek(ctx, date);
+  const generated = await writeDigestWithClaude(ctx, week);
   await notify(ctx, {
-    kind: 'digest', title: '本周', body: `本周到期 ${dueThisWeek}、逾期 ${today.overdue.length}、待确认 ${today.pending.length}`,
-    payload: { date, weekStart: monday, weekEnd: sunday, dueThisWeek, overdue: today.overdue.length, pending: today.pending.length },
-    collapseId: `digest:${monday}`,
+    kind: 'digest',
+    title: generated ? '本周计划' : '本周',
+    body: generated ?? templateDigest(week),
+    payload: {
+      date, weekStart: week.weekStart, weekEnd: week.weekEnd, dueThisWeek: week.dueThisWeek.length, overdue: week.overdue.length, pending: week.pending.length,
+      completedLastWeek: week.completedLastWeek, source: generated ? 'claude' : 'template', text: generated ?? templateDigest(week),
+    },
+    collapseId: `digest:${week.weekStart}`,
   });
   res.sent.push('digest');
   return res;

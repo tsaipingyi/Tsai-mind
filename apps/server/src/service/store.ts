@@ -92,6 +92,24 @@ export async function loadAccount(db: Db): Promise<Account> {
   return { id: r.id as string, email: r.email as string, name: r.name as string, timezone: r.timezone as string, settings: (r.settings as AccountSettings) ?? {}, hasPassword: !!r.password_hash };
 }
 
+/** Merge a partial update into the account row (settings are merged one level deep; `notifications` merges too). */
+export async function updateAccount(db: Db, patch: { name?: string; timezone?: string; settings?: Partial<Omit<AccountSettings, 'nudgeTemplate'>> & { nudgeTemplate?: string | null } }): Promise<Account> {
+  const current = await loadAccount(db);
+  const { nudgeTemplate, ...rest } = patch.settings ?? {};
+  const settings: AccountSettings = { ...current.settings, ...rest };
+  if (patch.settings?.notifications) settings.notifications = { ...(current.settings.notifications ?? {}), ...patch.settings.notifications };
+  if (nudgeTemplate !== undefined) {
+    if (nudgeTemplate === null) delete settings.nudgeTemplate;
+    else settings.nudgeTemplate = nudgeTemplate;
+  }
+  await db`update account set
+    name = ${patch.name ?? current.name},
+    timezone = ${patch.timezone ?? current.timezone},
+    settings = ${db.json(settings as never)}
+    where id = ${current.id}`;
+  return loadAccount(db);
+}
+
 export function confirmationSettings(s: AccountSettings): ConfirmationSettings {
   return {
     requireConfirmation: s.requireConfirmation ?? DEFAULT_SETTINGS.requireConfirmation,

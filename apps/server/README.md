@@ -67,6 +67,40 @@ pnpm --filter @tsai-mind/server password:set
 
 claude.ai 会自己注册客户端，然后跳到 `/oauth/authorize`：页面上显示客户端名、三个范围的勾选框（`decide`「允许替我确认变更」默认不勾）和密码框，输入密码点「允许」即可。签出的访问令牌 1 小时过期、刷新令牌 90 天，`GET /api/tokens` 里能看到（`kind: oauth`，带客户端名），`POST /oauth/revoke` 或 `token:revoke` 可以随时吊销。没设密码时授权页会拒绝并提示。
 
+## App 内助手（Claude API）
+
+网页和 iPhone 里的对话入口直接走服务端的 Claude API，用的是和 MCP 完全相同的一套工具（`src/tools/registry.ts`），所以助手改关键字段同样会进「待确认」，其他直接生效，草案先出预览。
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # 不设则助手和 Claude 周摘要都关闭
+export ASSISTANT_MODEL=claude-opus-5     # 可选，默认 claude-opus-5
+```
+
+请求用自适应思考、流式输出，并开启服务端拒答回退（`fallbacks: "default"`）。系统提示里放账号名、今天日期、三条规则和当前项目的大纲，后面打一个提示缓存断点，对话历史跟在后面。
+
+```
+GET    /api/assistant/status                       {configured, model}
+GET    /api/assistant/sessions                     [{id, title, projectId, updatedAt, lastText}]
+POST   /api/assistant/sessions {projectId?}        新会话
+GET    /api/assistant/sessions/:id                 {session, messages:[{id, role, text, toolCalls:[{name, input, resultText, isError}]}]}
+DELETE /api/assistant/sessions/:id
+POST   /api/assistant/sessions/:id/messages {text, projectId?}   → text/event-stream
+       event: text   data: {"delta":"…"}
+       event: tool   data: {"name":"update_node","input":{…},"result":{…}}   每完成一次工具调用一条；结果超过 2 KB 时是 {truncated:true, text}
+       event: done   data: {"messageId":"…","text":"完整回复"}
+       event: error  data: {"message":"…"}
+```
+
+没配 key 时发消息返回 503 `{error:"assistant_unconfigured"}`。工具以 actor `claude` 和当前令牌的范围运行（令牌没有 `decide` 就看不到 `decide_change` / `apply_plan_batch`），一轮最多 12 次工具调用。会话标题取第一条消息的前 30 个字；每一轮的内容块（含 tool_use / tool_result）原样存进 `assistant_message`，下一轮原样回放。
+
+## 设置
+
+```
+PATCH /api/me {name?, timezone?, settings?: {notifications?: {dueSoon, overdue, nudgeDue, digest}, nudgeTemplate?, keyFields?, requireConfirmation?}}
+```
+
+返回合并后的账号。`requireConfirmation: false` 时 Claude 的所有修改直接生效；`keyFields` 从 `dueDate` / `startDate` / `ownerId` / `delete` / `status_done` 里挑哪些要确认。这两项和 core 的 `splitPatch` / `opNeedsConfirmation` 是同一套规则，MCP 和助手都遵守。`nudgeTemplate` 传 `null` 恢复默认催办模板。
+
 ## 推送到 iPhone
 
 `src/push.ts` 用 Expo 推送服务发通知（`EXPO_ACCESS_TOKEN` 可选）。App 拿到 Expo push token 后注册设备：
@@ -85,9 +119,12 @@ DELETE /api/devices/:id
 | `batch` | Claude 生成草案 | 打开预览 |
 | `due` | 每天 09:00 「今天到期 n 项、逾期 m 项」 | 完成 / 推迟一天 → `POST /api/nodes/:id/done` / `postpone {days}` |
 | `nudge` | 每天 09:00 「该催了：…」 | 打开 |
-| `digest` | 周一 08:00 「本周到期 n、逾期 m、待确认 k」 | 打开 |
+| `digest` | 周一 08:00 「本周计划」：配置了 `ANTHROPIC_API_KEY` 时由 Claude 根据这一周的逾期、本周到期、待确认、该催办、上周完成数写成 3–5 行；没配或出错时退回「本周到期 n、逾期 m、待确认 k」 | 打开 |
+| `dependency` | 一条 op 提交后，某个前置任务的截止日刚刚越过后续任务的开始日：「「前置」延到 10/5，晚于「后续」的开始日 9/15，晚 20 天」；同一对节点、同样的日期不会重复推，日期再往后挪才会再推一次 | 打开节点 |
 
-定时任务（`src/scheduler.ts`）每分钟按 `TZ_NAME` 检查一次，发过的会记在 `notification` 表（kind + 日期），重启不会重发。`account.settings.notifications` 里 `dueSoon` / `overdue` / `nudgeDue` / `digest` 四个开关默认开；变更和草案的推送不能关。手动触发：`POST /api/notifications/run?kind=daily|weekly`（需要 `decide` 范围）。`GET /api/notifications?unread=1`、`POST /api/notifications/:id/read` 给 App 读列表和标已读。
+定时任务（`src/scheduler.ts`）每分钟按 `TZ_NAME` 检查一次，发过的会记在 `notification` 表（kind + 日期），重启不会重发。`account.settings.notifications` 里 `dueSoon` / `overdue` / `nudgeDue` / `digest` 四个开关默认开；变更和草案的推送不能关。手动触发：`POST /api/notifications/run?kind=daily|weekly`（需要 `decide` 范围）。周摘要的正文存在 `notification.payload.text`，`payload.source` 标记是 `claude` 还是 `template`。
+
+依赖相关：`POST /api/dependencies` 和 MCP / 助手的 `add_dependency` 会拒绝形成循环的依赖（409 `dependency_cycle`）；`GET /api/projects/:id` 和 `get_tree`（json）额外返回 `criticalPath`（从根一路沿最晚截止的子节点走到叶子的节点 id）和 `slips`（当前所有延误的依赖），都是算出来的，不存库。`GET /api/notifications?unread=1`、`POST /api/notifications/:id/read` 给 App 读列表和标已读。
 
 ## 部署
 

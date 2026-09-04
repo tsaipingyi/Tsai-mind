@@ -6,7 +6,7 @@ import { rowToPlanBatch, type PlanBatchRow } from '../mapping.js';
 import { HttpError, badRequest, notFound } from '../errors.js';
 import { applyInTx, type OpResult } from './ops.js';
 import { insertActivity, loadContacts, loadStore } from './store.js';
-import { notifyPlanDrafted } from '../notify.js';
+import { notifyDependencySlips, notifyPlanDrafted } from '../notify.js';
 
 export interface PlanDiff extends PlanResult {
   actor: Actor;
@@ -91,6 +91,7 @@ export async function applyPlanBatch(ctx: Ctx, id: string): Promise<ApplyBatchRe
       return r;
     });
     for (const m of out.messages) ctx.hub.broadcast(m);
+    await notifyDependencySlips(ctx, batch.projectId, out.slips.before, out.slips.after).catch((err) => ctx.log.error(err, 'notify: dependency push failed'));
     const updated = await getPlanBatch(ctx, id);
     ctx.hub.broadcast({ type: 'batch', batch: updated });
     return { batch: updated, results: out.results, serverSeq: out.serverSeq };

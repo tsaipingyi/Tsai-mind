@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import {
   addDays,
+  computeCriticalPath,
   computeRollup,
   computeToday,
+  dependencyWouldCycle,
+  findDependencySlips,
   firstRank,
   isOverdue,
   parseOutline,
@@ -11,6 +14,7 @@ import {
   shortDate,
   type Actor,
   type Contact,
+  type Dependency,
   type Derived,
   type Op,
   type Project,
@@ -113,6 +117,21 @@ export async function updateProject(ctx: Ctx, id: string, patch: { name?: string
   return { ...(await loadProject(ctx.sql, id)), rootNodeId: p.rootNodeId };
 }
 
+/** A predecessor whose due date has slipped past a successor's start (computed, never stored). */
+export interface SlipInfo {
+  fromNode: string;
+  toNode: string;
+  fromTitle: string;
+  toTitle: string;
+  fromDue: string;
+  toStart: string;
+  days: number;
+}
+
+export function slipsOf(store: TreeStore, derived: Map<string, Derived>, deps: Dependency[]): SlipInfo[] {
+  return findDependencySlips(store, derived, deps).map((s) => ({ fromNode: s.from.id, toNode: s.to.id, fromTitle: s.from.title, toTitle: s.to.title, fromDue: s.fromDue, toStart: s.toStart, days: s.days }));
+}
+
 export interface ProjectDetail {
   project: Project;
   nodes: TNode[];
@@ -120,21 +139,27 @@ export interface ProjectDetail {
   contacts: Contact[];
   pendingChanges: ChangeWithContext[];
   dependencies: { fromNode: string; toNode: string }[];
+  /** Node ids root-first, following the latest-due child at every level. */
+  criticalPath: string[];
+  slips: SlipInfo[];
   serverSeq: number;
 }
 
 export async function getProjectDetail(ctx: Ctx, id: string): Promise<ProjectDetail> {
   const project = await loadProject(ctx.sql, id);
   const store = await loadStore(ctx.sql, id);
-  const derived = Object.fromEntries(computeRollup(store));
+  const derivedMap = computeRollup(store);
+  const dependencies = await loadDependencies(ctx.sql, id);
   const seq = await ctx.sql`select coalesce(max(server_seq), 0) as seq from op where project_id = ${id}`;
   return {
     project,
     nodes: store.all(),
-    derived,
+    derived: Object.fromEntries(derivedMap),
     contacts: await loadContacts(ctx.sql),
     pendingChanges: await listChanges(ctx, { projectId: id }),
-    dependencies: await loadDependencies(ctx.sql, id),
+    dependencies,
+    criticalPath: computeCriticalPath(store, derivedMap),
+    slips: slipsOf(store, derivedMap, dependencies),
     serverSeq: Number(seq[0]!.seq),
   };
 }
@@ -143,6 +168,8 @@ export interface TreeJson {
   project: Project;
   nodes: (TNode & { derived: Derived })[];
   dependencies: { fromNode: string; toNode: string }[];
+  criticalPath: string[];
+  slips: SlipInfo[];
 }
 
 /** Tree as JSON, depth-limited (depth 1 = root only). */
@@ -157,7 +184,8 @@ export async function getTreeJson(ctx: Ctx, projectId: string, depth?: number): 
     for (const c of store.children(n.id)) walk(c, level + 1);
   };
   for (const r of store.children(null)) walk(r, 1);
-  return { project, nodes: out, dependencies: await loadDependencies(ctx.sql, projectId) };
+  const dependencies = await loadDependencies(ctx.sql, projectId);
+  return { project, nodes: out, dependencies, criticalPath: computeCriticalPath(store, derived), slips: slipsOf(store, derived, dependencies) };
 }
 
 export async function getOutline(ctx: Ctx, projectId: string, rootId?: string, depth?: number): Promise<string> {
@@ -395,6 +423,10 @@ export async function addDependency(ctx: Ctx, fromNodeId: string, toNodeId: stri
   const a = await locateNode(ctx, fromNodeId);
   const b = await locateNode(ctx, toNodeId);
   if (a.project.id !== b.project.id) throw badRequest('dependencies must stay within one project');
+  const existing = await loadDependencies(ctx.sql, a.project.id);
+  if (dependencyWouldCycle(existing, fromNodeId, toNodeId)) {
+    throw new HttpError(409, 'dependency_cycle', `「${a.node.title}」已经（直接或间接）依赖「${b.node.title}」，再加这条依赖会形成循环`, { fromNode: fromNodeId, toNode: toNodeId });
+  }
   await ctx.sql`insert into dependency (from_node, to_node) values (${fromNodeId}, ${toNodeId}) on conflict do nothing`;
   await insertActivity(ctx.sql, { projectId: a.project.id, nodeId: toNodeId, actor, kind: 'dependency_added', payload: { fromNode: fromNodeId, toNode: toNodeId } });
 }

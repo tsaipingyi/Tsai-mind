@@ -2,6 +2,7 @@ import type { Sql } from '../db.js';
 import type { Config } from '../config.js';
 import type { Hub } from '../realtime.js';
 import type { PushSender } from '../push.js';
+import type { ClaudeClient } from '../assistant/client.js';
 import { toISODate } from '@tsai-mind/core';
 
 export interface Logger {
@@ -17,6 +18,8 @@ export interface Ctx {
   log: Logger;
   /** Push sender for owner notifications (tests inject a capturing transport). */
   push: PushSender;
+  /** Claude client for the assistant and the weekly digest; null when ANTHROPIC_API_KEY is unset (tests inject a scripted fake). */
+  anthropic: ClaudeClient | null;
 }
 
 export const nowIso = (): string => new Date().toISOString();

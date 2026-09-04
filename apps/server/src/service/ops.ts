@@ -13,9 +13,11 @@ import type { Tx } from '../db.js';
 import { rowToChange } from '../mapping.js';
 import type { Ctx } from './context.js';
 import { nowIso, withProjectLock } from './context.js';
-import { confirmationSettings, insertActivity, loadAccount, loadStore, persistNodes } from './store.js';
+import { computeRollup } from '@tsai-mind/core';
+import { confirmationSettings, insertActivity, loadAccount, loadDependencies, loadStore, persistNodes } from './store.js';
 import type { RealtimeMessage } from '../realtime.js';
-import { notifyPendingChanges } from '../notify.js';
+import { notifyDependencySlips, notifyPendingChanges } from '../notify.js';
+import { slipsOf, type SlipInfo } from './queries.js';
 
 export interface OpResult {
   opId: string;
@@ -34,6 +36,8 @@ export interface ApplyOutcome {
   results: OpResult[];
   serverSeq: number;
   changes: Change[];
+  /** Dependency slips in the project before and after these ops (computed, for notifications). */
+  slips: { before: SlipInfo[]; after: SlipInfo[] };
 }
 
 export interface ApplyOptions {
@@ -106,7 +110,9 @@ export async function applyOps(ctx: Ctx, projectId: string, ops: Op[], opts: App
     for (const m of outcome.messages) ctx.hub.broadcast(m);
     // Newly proposed changes (Claude touching key fields) go to the owner's phone, one push per node.
     if (outcome.changes.length) await notifyPendingChanges(ctx, projectId, outcome.changes, opts.reason ?? null).catch((err) => ctx.log.error(err, 'notify: change push failed'));
-    return { results: outcome.results, serverSeq: outcome.serverSeq, changes: outcome.changes };
+    // A predecessor that just slipped past a successor's start (DESIGN §4.4); unchanged slips are not repeated.
+    await notifyDependencySlips(ctx, projectId, outcome.slips.before, outcome.slips.after).catch((err) => ctx.log.error(err, 'notify: dependency push failed'));
+    return { results: outcome.results, serverSeq: outcome.serverSeq, changes: outcome.changes, slips: outcome.slips };
   });
 }
 
@@ -120,6 +126,8 @@ export async function applyInTx(
   const account = await loadAccount(tx);
   const settings = confirmationSettings(account.settings);
   const store = await loadStore(tx, projectId);
+  const deps = await loadDependencies(tx, projectId);
+  const slipsBefore = slipsOf(store, computeRollup(store), deps);
   const results: OpResult[] = [];
   const messages: RealtimeMessage[] = [];
   const newChanges: Change[] = [];
@@ -229,7 +237,8 @@ export async function applyInTx(
   }
 
   for (const c of newChanges) messages.push({ type: 'change', change: c });
-  return { results, serverSeq, changes: newChanges, messages };
+  const slipsAfter = slipsOf(store, computeRollup(store), deps);
+  return { results, serverSeq, changes: newChanges, messages, slips: { before: slipsBefore, after: slipsAfter } };
 }
 
 const UNDO_WINDOW_DAYS = 7;

@@ -2,12 +2,13 @@
  * Push sender on top of expo-server-sdk with an injectable transport so tests can capture messages.
  * Every push carries `data` {kind, nodeId?, changeId?, batchId?, projectId?} and a `categoryId`
  * that the iOS app maps to notification actions:
- *   change → approve / reject, batch → open, due → done / postpone, nudge → open, digest → open.
+ *   change → approve / reject, batch → open, due → done / postpone, nudge → open, digest → open,
+ *   dependency → open the node whose due date slipped past a successor's start.
  */
 import { Expo, type ExpoPushMessage, type ExpoPushTicket } from 'expo-server-sdk';
 import type { Logger } from './service/context.js';
 
-export type PushCategory = 'change' | 'batch' | 'due' | 'nudge' | 'digest';
+export type PushCategory = 'change' | 'batch' | 'due' | 'nudge' | 'digest' | 'dependency';
 
 export interface PushData {
   kind: PushCategory;

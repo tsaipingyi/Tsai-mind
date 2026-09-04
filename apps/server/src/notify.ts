@@ -4,6 +4,7 @@
  * change / batch / dependency pushes are not toggleable (DESIGN §4.4).
  */
 import { shortDate, type Change } from '@tsai-mind/core';
+import type { SlipInfo } from './service/queries.js';
 import type { Sql } from './db.js';
 import { notFound } from './errors.js';
 import type { PushCategory, PushData } from './push.js';
@@ -19,7 +20,7 @@ const CATEGORY_OF: Record<NotificationKind, PushCategory> = {
   due_summary: 'due',
   nudge_due: 'nudge',
   digest: 'digest',
-  dependency_slip: 'nudge',
+  dependency_slip: 'dependency',
 };
 
 export interface NotificationRow {
@@ -214,4 +215,30 @@ export async function notifyPlanDrafted(ctx: Ctx, batch: { id: string; projectId
     payload: { summary: s, parentTitle },
     collapseId: `batch:${batch.id}`,
   });
+}
+
+/** Key that identifies one slip state: the same predecessor/successor pair with the same dates is not re-notified. */
+export const slipKey = (s: SlipInfo): string => `${s.fromNode}>${s.toNode}@${s.fromDue}>${s.toStart}`;
+
+/** Push「「前置」延到 10/5，晚于「后续」的开始日 9/15，晚 20 天」 for every slip that is new since `before`. */
+export async function notifyDependencySlips(ctx: Ctx, projectId: string, before: SlipInfo[], after: SlipInfo[]): Promise<NotificationRow[]> {
+  const seen = new Set(before.map(slipKey));
+  const fresh = after.filter((s) => !seen.has(slipKey(s)));
+  if (fresh.length === 0) return [];
+  const year = currentYear(ctx);
+  const out: NotificationRow[] = [];
+  for (const s of fresh) {
+    out.push(
+      await notify(ctx, {
+        kind: 'dependency_slip',
+        title: '依赖延误',
+        body: `「${s.fromTitle}」延到 ${shortDate(s.fromDue, year)}，晚于「${s.toTitle}」的开始日 ${shortDate(s.toStart, year)}，晚 ${s.days} 天`,
+        nodeId: s.fromNode,
+        projectId,
+        payload: { fromNode: s.fromNode, toNode: s.toNode, fromTitle: s.fromTitle, toTitle: s.toTitle, fromDue: s.fromDue, toStart: s.toStart, days: s.days },
+        collapseId: `dependency:${s.fromNode}>${s.toNode}`,
+      }),
+    );
+  }
+  return out;
 }

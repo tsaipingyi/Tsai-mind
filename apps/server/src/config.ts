@@ -11,6 +11,10 @@ export interface Config {
   expoAccessToken: string | undefined;
   /** Set to false to disable the 09:00 / Monday 08:00 scheduler (tests). */
   scheduler: boolean;
+  /** Claude API key for the in-app assistant and the weekly digest; unset = assistant disabled. */
+  anthropicApiKey: string | undefined;
+  /** Model used by the assistant and the digest. */
+  assistantModel: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -29,5 +33,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .filter(Boolean),
     expoAccessToken: env.EXPO_ACCESS_TOKEN || undefined,
     scheduler: env.SCHEDULER !== 'off',
+    anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
+    assistantModel: env.ASSISTANT_MODEL || 'claude-opus-5',
   };
 }

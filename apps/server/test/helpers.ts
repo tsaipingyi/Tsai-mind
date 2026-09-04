@@ -8,6 +8,7 @@ import { createToken, setOwnerPassword, type Scope } from '../src/auth.js';
 import type { Ctx } from '../src/service/context.js';
 import { capturingTransport, createPushSender } from '../src/push.js';
 import type { ExpoPushMessage } from 'expo-server-sdk';
+import type { ClaudeClient } from '../src/assistant/client.js';
 
 export const TEST_DB_URL = process.env.DATABASE_URL ?? 'postgres://postgres@localhost:5433/tsaimind_test';
 
@@ -23,6 +24,8 @@ export interface TestServer {
   setPassword(password: string): Promise<void>;
   /** Pushes captured by the injected transport (cleared by reset()). */
   pushes: ExpoPushMessage[];
+  /** Inject a Claude client (a scripted fake); reset() removes it again. */
+  useClaude(client: ClaudeClient | null): void;
   /** JSON request helper with bearer auth. */
   api<T = unknown>(method: string, path: string, opts?: { body?: unknown; token?: string | null; raw?: boolean }): Promise<{ status: number; body: T }>;
   close(): Promise<void>;
@@ -33,7 +36,7 @@ export async function startTestServer(): Promise<TestServer> {
   const sql = createDb(config.databaseUrl);
   await migrate(sql);
   const capture = capturingTransport();
-  const ctx: Ctx = { sql, hub: new Hub(), config, log: { info: () => {}, warn: () => {}, error: () => {} }, push: createPushSender({ transport: capture.transport, log: { info: () => {}, warn: () => {}, error: () => {} } }) };
+  const ctx: Ctx = { sql, hub: new Hub(), config, log: { info: () => {}, warn: () => {}, error: () => {} }, push: createPushSender({ transport: capture.transport, log: { info: () => {}, warn: () => {}, error: () => {} } }), anthropic: null };
   const app = await buildApp(ctx, { logger: false });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -42,9 +45,10 @@ export async function startTestServer(): Promise<TestServer> {
   ctx.config.publicUrl = baseUrl;
 
   const reset = async () => {
-    await sql`truncate table activity, op, change, note, dependency, plan_batch, notification, device, node, project, contact, access_token, oauth_refresh_token, oauth_code, oauth_client, account restart identity cascade`;
+    await sql`truncate table activity, op, change, note, dependency, plan_batch, notification, device, assistant_message, assistant_session, node, project, contact, access_token, oauth_refresh_token, oauth_code, oauth_client, account restart identity cascade`;
     await ensureAccount(sql, config.accountEmail, config.accountName, config.tzName);
     capture.reset();
+    ctx.anthropic = null;
   };
   let defaultToken: string | null = null;
   const token = async (scopes: Scope[] = ['read', 'write', 'decide']) => (await createToken(sql, { label: 'test', scopes })).token;
@@ -71,6 +75,9 @@ export async function startTestServer(): Promise<TestServer> {
     app, ctx, sql, baseUrl, reset, token, api,
     setPassword: (password: string) => setOwnerPassword(sql, password),
     pushes: capture.messages,
+    useClaude: (client) => {
+      ctx.anthropic = client;
+    },
     close: async () => {
       await app.close();
       await sql.end();
