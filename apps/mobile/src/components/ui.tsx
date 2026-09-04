@@ -1,15 +1,21 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import type { NodeStatus } from '@tsai-mind/core';
-import { C, FONT, MONO, RADIUS, STATUS_COLOR } from '../theme';
-import { STATUS_LABEL, initial } from '../lib/util';
+import { C, FONT, MONO, PAGE_PAD, RADIUS, STATUS_COLOR } from '../theme';
+import { STATUS_LABEL } from '../lib/util';
 import { useToasts } from '../state/toast';
 
+/**
+ * Buttons per the artboards: primary = orange, 44 high, radius 10, white 16/500;
+ * secondary = white, 1px line, 16 ink. `grow` fills the row.
+ */
 export function Btn({
   title,
   onPress,
   kind = 'secondary',
-  small,
+  grow,
+  width,
+  height = 44,
   disabled,
   busy,
   style,
@@ -18,7 +24,9 @@ export function Btn({
   title: string;
   onPress?: () => void;
   kind?: 'primary' | 'secondary' | 'danger';
-  small?: boolean;
+  grow?: boolean;
+  width?: number;
+  height?: number;
   disabled?: boolean;
   busy?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -33,9 +41,10 @@ export function Btn({
       onPress={onPress}
       style={({ pressed }) => [
         s.btn,
-        small && s.btnSmall,
+        { height },
+        grow && { flexGrow: 1, flexBasis: 0 },
+        width !== undefined && { width },
         kind === 'primary' && s.btnPrimary,
-        kind === 'danger' && s.btnDanger,
         pressed && (kind === 'primary' ? { backgroundColor: C.orangeDeep } : { backgroundColor: C.paper2 }),
         off && { opacity: 0.5 },
         style,
@@ -44,57 +53,70 @@ export function Btn({
       {busy ? (
         <ActivityIndicator size="small" color={kind === 'primary' ? '#fff' : C.ink2} />
       ) : (
-        <Text style={[s.btnText, small && { fontSize: FONT.small }, kind === 'primary' && { color: '#fff' }, kind === 'danger' && { color: C.red }]}>{title}</Text>
+        <Text style={[s.btnText, kind === 'primary' && { color: '#fff', fontWeight: '500' }, kind === 'danger' && { color: C.red }]}>{title}</Text>
       )}
     </Pressable>
   );
 }
 
-export function StatusPill({ status, active = true, onPress }: { status: NodeStatus; active?: boolean; onPress?: () => void }) {
+/** Status pill (Node.dc.html): 40 high, radius 20, 15px; selected = 1.5px border in the status colour + same colour 500. */
+export function StatusPill({ status, active, onPress, grow = true, disabled }: { status: NodeStatus; active: boolean; onPress?: () => void; grow?: boolean; disabled?: boolean }) {
   const color = STATUS_COLOR[status];
   return (
     <Pressable
-      accessibilityRole={onPress ? 'button' : undefined}
-      accessibilityState={{ selected: active }}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active, disabled: !!disabled }}
+      aria-selected={active}
       onPress={onPress}
-      disabled={!onPress}
-      style={[s.pill, { borderColor: active ? color : C.line }]}
+      disabled={disabled || !onPress}
+      style={[s.pill, grow && { flexGrow: 1, flexBasis: 0 }, active && { borderColor: color, borderWidth: 1.5 }, disabled && { opacity: 0.6 }]}
+      testID={`status-${status}`}
     >
-      <Text style={[s.pillText, { color: active ? color : C.ink3 }]}>{STATUS_LABEL[status]}</Text>
+      <Text style={[s.pillText, active && { color, fontWeight: '500' }]}>{STATUS_LABEL[status]}</Text>
     </Pressable>
   );
 }
 
 export function StatusDot({ status, size = 8 }: { status: NodeStatus; size?: number }) {
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: STATUS_COLOR[status] }} />;
+  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: STATUS_COLOR[status], flexShrink: 0 }} />;
 }
 
-export function Avatar({ name, me, size = 28 }: { name?: string | null; me?: boolean; size?: number }) {
-  const isMe = me || name == null;
+/** The orange 8px「待确认」marker (design-system §2). */
+export function PendingDot() {
+  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: C.orange, flexShrink: 0 }} />;
+}
+
+/** 13px ink2 list label with a 1px bottom line (Main.dc.html「要做的 · 4」). */
+export function ListLabel({ text, testID }: { text: string; testID?: string }) {
   return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: isMe ? C.ink : C.paper2,
-        borderWidth: isMe ? 0 : 1,
-        borderColor: C.line,
-      }}
-    >
-      <Text style={{ fontSize: size * 0.42, fontWeight: '600', color: isMe ? '#fff' : C.ink2 }}>{isMe ? '我' : initial(name ?? '?')}</Text>
-    </View>
+    <Text style={s.listLabel} testID={testID}>
+      {text}
+    </Text>
   );
 }
 
-export function SectionHeader({ title, count, first }: { title: string; count?: number; first?: boolean }) {
+/** 15px ink2 row with a trailing › (「本周还有 3 项」「还有 n 项待确认」「更多：…」). */
+export function MoreRow({ text, onPress, expanded, tall, testID, top }: { text: string; onPress: () => void; expanded?: boolean; tall?: boolean; testID?: string; top?: boolean }) {
   return (
-    <View style={[s.sectionHeader, first && { marginTop: 4 }]}>
-      <Text style={s.sectionTitle}>{title}</Text>
-      {count !== undefined && <Text style={s.sectionCount}>{count}</Text>}
-    </View>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ expanded }} style={[s.moreRow, tall && s.moreRowTall, top && { borderTopWidth: 1, borderColor: C.line }]} testID={testID}>
+      <Text style={s.moreText} numberOfLines={1}>
+        {text}
+      </Text>
+      <Text style={[s.chev, expanded && { transform: [{ rotate: '90deg' }] }]}>›</Text>
+    </Pressable>
+  );
+}
+
+export function Chevron() {
+  return <Text style={s.chev}>›</Text>;
+}
+
+/** Orange ‹ back chevron (22px, 24 wide) used by the project and node headers. */
+export function BackChevron({ onPress, testID }: { onPress: () => void; testID?: string }) {
+  return (
+    <Pressable onPress={onPress} hitSlop={12} accessibilityRole="button" accessibilityLabel="返回" testID={testID} style={{ width: 24 }}>
+      <Text style={s.back}>‹</Text>
+    </Pressable>
   );
 }
 
@@ -114,21 +136,34 @@ export function Line() {
   return <View style={s.line} />;
 }
 
-export function LargeTitle({ title, right }: { title: string; right?: ReactNode }) {
+/** Large title (34/700, -0.3 tracking) with a baseline-aligned right slot. */
+export function LargeTitle({ title, right, onPress, testID }: { title: string; right?: ReactNode; onPress?: () => void; testID?: string }) {
+  const text = (
+    <Text style={s.largeTitleText} accessibilityRole="header">
+      {title}
+    </Text>
+  );
   return (
     <View style={s.largeTitle}>
-      <Text style={s.largeTitleText} accessibilityRole="header">
-        {title}
-      </Text>
+      {onPress ? (
+        <Pressable onPress={onPress} hitSlop={8} accessibilityRole="button" testID={testID} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {text}
+        </Pressable>
+      ) : (
+        text
+      )}
       {right}
     </View>
   );
 }
 
-export function HeaderLink({ title, onPress, testID }: { title: string; onPress: () => void; testID?: string }) {
+/** 15px text link; orange (#D4550C, 500) for actions like 问 Claude / 新对话, ink2 otherwise. */
+export function HeaderLink({ title, onPress, testID, tone = 'ink' }: { title: string; onPress: () => void; testID?: string; tone?: 'ink' | 'orange' }) {
   return (
     <Pressable onPress={onPress} hitSlop={8} testID={testID} accessibilityRole="button">
-      {({ pressed }) => <Text style={{ fontSize: FONT.body, color: pressed ? C.ink3 : C.ink2 }}>{title}</Text>}
+      {({ pressed }) => (
+        <Text style={{ fontSize: FONT.body, color: tone === 'orange' ? C.orangeDeep : C.ink2, fontWeight: tone === 'orange' ? '500' : '400', opacity: pressed ? 0.6 : 1 }}>{title}</Text>
+      )}
     </Pressable>
   );
 }
@@ -144,8 +179,8 @@ export function Banner({ text, tone = 'info' }: { text: string; tone?: 'info' | 
 export function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <Pressable onPress={() => onChange(!checked)} style={s.checkRow} accessibilityRole="checkbox" accessibilityState={{ checked }}>
-      <View style={[s.checkBox, checked && { backgroundColor: C.orange, borderColor: C.orange }]}>{checked && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>✓</Text>}</View>
-      <Text style={{ fontSize: FONT.small, color: C.ink2, flex: 1 }}>{label}</Text>
+      <View style={[s.checkBox, checked && { backgroundColor: C.orange, borderColor: C.orange }]}>{checked && <View style={s.checkMark} />}</View>
+      {label ? <Text style={{ fontSize: FONT.small, color: C.ink2, flex: 1 }}>{label}</Text> : null}
     </Pressable>
   );
 }
@@ -178,29 +213,29 @@ const s = StyleSheet.create({
     borderColor: C.line,
     borderRadius: RADIUS,
     paddingHorizontal: 14,
-    paddingVertical: 9,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: C.paper,
-    minHeight: 40,
   },
-  btnSmall: { paddingHorizontal: 12, paddingVertical: 6, minHeight: 32 },
   btnPrimary: { backgroundColor: C.orange, borderColor: C.orange },
-  btnDanger: { borderColor: C.line },
-  btnText: { fontSize: FONT.body, fontWeight: '500', color: C.ink },
-  pill: { borderWidth: 1, borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: C.paper },
-  pillText: { fontSize: FONT.small, fontWeight: '500' },
-  sectionHeader: { flexDirection: 'row', alignItems: 'baseline', gap: 8, paddingHorizontal: 16, paddingTop: 22, paddingBottom: 8 },
-  sectionTitle: { fontSize: FONT.title, fontWeight: '700', color: C.ink },
-  sectionCount: { fontSize: FONT.small, color: C.ink3, fontFamily: MONO },
-  empty: { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.line },
+  btnText: { fontSize: FONT.input, color: C.ink },
+  pill: { height: 40, borderRadius: 20, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center', backgroundColor: C.paper, paddingHorizontal: 12 },
+  pillText: { fontSize: FONT.body, color: C.ink2 },
+  listLabel: { fontSize: FONT.small, color: C.ink2, paddingBottom: 6, borderBottomWidth: 1, borderColor: C.line },
+  moreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, gap: 12 },
+  moreRowTall: { height: 44, paddingVertical: 0 },
+  moreText: { fontSize: FONT.body, color: C.ink2, flexShrink: 1 },
+  chev: { fontSize: 18, color: C.ink3 },
+  back: { fontSize: 22, color: C.orange, lineHeight: 26 },
+  empty: { paddingVertical: 14 },
   emptyText: { color: C.ink3, fontSize: FONT.small },
   line: { height: 1, backgroundColor: C.line },
-  largeTitle: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6 },
-  largeTitleText: { fontSize: FONT.large, fontWeight: '700', color: C.ink, letterSpacing: 0.2 },
-  banner: { backgroundColor: C.paper2, paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 1, borderColor: C.line },
+  largeTitle: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingHorizontal: PAGE_PAD },
+  largeTitleText: { fontSize: FONT.large, fontWeight: '700', color: C.ink, letterSpacing: -0.3, lineHeight: 41 },
+  banner: { backgroundColor: C.paper2, paddingHorizontal: PAGE_PAD, paddingVertical: 8, borderBottomWidth: 1, borderColor: C.line },
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   checkBox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: C.ink3, alignItems: 'center', justifyContent: 'center', backgroundColor: C.paper },
+  checkMark: { width: 8, height: 8, borderRadius: 2, backgroundColor: '#fff' },
   toastWrap: { position: 'absolute', left: 16, right: 16, bottom: 96, gap: 8, alignItems: 'center' },
   toast: { backgroundColor: C.paper, borderWidth: 1, borderColor: C.line, borderRadius: RADIUS, paddingHorizontal: 14, paddingVertical: 10, maxWidth: '100%' },
 });

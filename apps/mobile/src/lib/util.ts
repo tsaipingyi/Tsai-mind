@@ -1,4 +1,5 @@
 import { daysBetween, shortDate, toISODate } from '@tsai-mind/core';
+export { daysBetween };
 import type { Contact, ISODate, NodeStatus, TNode } from '@tsai-mind/core';
 
 export const STATUS_LABEL: Record<NodeStatus, string> = {
@@ -41,6 +42,17 @@ export function today(): ISODate {
 export function fmtDate(iso: ISODate | null | undefined): string {
   if (!iso) return '';
   return shortDate(iso, new Date().getFullYear());
+}
+
+/** 「周五」for a date. */
+export function weekdayLabel(iso: ISODate): string {
+  return `周${'日一二三四五六'[isoToDate(iso).getDay()]}`;
+}
+
+/** 「9月4日 周五」— the date shown beside the 今天 title. */
+export function longDate(iso: ISODate): string {
+  const [, m, d] = iso.split('-').map(Number) as [number, number, number];
+  return `${m}月${d}日 ${weekdayLabel(iso)}`;
 }
 
 export function fmtRange(start: ISODate | null, due: ISODate | null): string {

@@ -2,18 +2,20 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Contact } from '@tsai-mind/core';
 import type { TodayEntry } from '../api/types';
 import { C, FONT, MONO } from '../theme';
-import { contactName, fmtDate } from '../lib/util';
-import { Avatar, Btn } from './ui';
+import { contactName, fmtDate, weekdayLabel } from '../lib/util';
 import { SwipeRow } from './SwipeRow';
 
+export type TaskWhen = 'overdue' | 'today' | 'tomorrow' | 'week';
+
 /**
- * A task line in 今天. Swipe left = 标记完成, swipe right = 推迟一天 (iOS habit, design-system §7).
+ * A row of 要做的 (Main.dc.html): min-height 64, title 17/500, sub 13 (owner · 逾期 n 天 in red / 今天 / 明天),
+ * right-aligned mono 15 date (red when overdue) and, for overdue rows with a contact owner, a trailing「催」.
+ * Swipe left = 标记完成, swipe right = 推迟一天.
  */
 export function TaskRow({
   entry,
   contacts,
-  overdue,
-  showNudge,
+  when,
   onPress,
   onDone,
   onPostpone,
@@ -21,32 +23,33 @@ export function TaskRow({
 }: {
   entry: TodayEntry;
   contacts: Contact[];
-  overdue?: boolean;
-  showNudge?: boolean;
+  when: TaskWhen;
   onPress: () => void;
   onDone?: () => void;
   onPostpone?: () => void;
   onNudge?: () => void;
 }) {
   const n = entry.node;
-  const owner = n.ownerId ? contactName(contacts, n.ownerId) : null;
-  const sub = [entry.projectName, ...entry.path.slice(1)].join(' / ') + (owner ? ` · ${owner}` : '');
+  const owner = contactName(contacts, n.ownerId);
+  const due = entry.derived.dueDate;
+  const overdue = when === 'overdue';
+  const sub = overdue ? `${owner} · 逾期 ${Math.max(entry.daysOverdue, 1)} 天` : when === 'today' ? `${owner} · 今天` : when === 'tomorrow' ? `${owner} · 明天` : `${owner} · ${due ? weekdayLabel(due) : ''}`;
   const body = (
     <Pressable onPress={onPress} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.paper2 }]} testID={`task-${n.id}`}>
-      <Avatar name={owner} me={!n.ownerId} />
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, gap: 3 }}>
         <Text style={s.title} numberOfLines={1}>
           {n.title || '（无标题）'}
         </Text>
-        <Text style={s.sub} numberOfLines={1}>
+        <Text style={[s.sub, overdue && { color: C.red }]} numberOfLines={1}>
           {sub}
         </Text>
       </View>
-      <View style={{ alignItems: 'flex-end', gap: 2 }}>
-        <Text style={[s.date, overdue && { color: C.red }]}>{fmtDate(entry.derived.dueDate)}</Text>
-        {overdue && entry.daysOverdue > 0 && <Text style={s.overdue}>逾期 {entry.daysOverdue} 天</Text>}
-      </View>
-      {showNudge && onNudge && <Btn title="催办" small kind="primary" onPress={onNudge} testID={`nudge-${n.id}`} />}
+      <Text style={[s.date, overdue && { color: C.red }]}>{fmtDate(due)}</Text>
+      {overdue && n.ownerId && onNudge ? (
+        <Pressable onPress={onNudge} hitSlop={8} accessibilityRole="button" accessibilityLabel="催办" testID={`nudge-${n.id}`} style={s.nudge}>
+          <Text style={s.nudgeText}>催</Text>
+        </Pressable>
+      ) : null}
     </Pressable>
   );
   if (!onDone && !onPostpone) return body;
@@ -58,9 +61,10 @@ export function TaskRow({
 }
 
 const s = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 11, backgroundColor: C.paper, borderBottomWidth: 1, borderColor: C.line, minHeight: 60 },
-  title: { fontSize: FONT.body, fontWeight: '500', color: C.ink },
-  sub: { fontSize: FONT.tiny, color: C.ink2, marginTop: 2 },
-  date: { fontFamily: MONO, fontSize: FONT.small, color: C.ink2 },
-  overdue: { fontSize: FONT.tiny, color: C.red },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 64, paddingVertical: 10, backgroundColor: C.paper, borderBottomWidth: 1, borderColor: C.line },
+  title: { fontSize: FONT.title, fontWeight: '500', color: C.ink },
+  sub: { fontSize: FONT.small, color: C.ink2 },
+  date: { fontFamily: MONO, fontSize: FONT.body, color: C.ink },
+  nudge: { paddingVertical: 8, paddingLeft: 12, marginLeft: -12 },
+  nudgeText: { fontSize: FONT.body, fontWeight: '500', color: C.orangeDeep },
 });

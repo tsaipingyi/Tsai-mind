@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { addDays, daysBetween, toISODate } from '@tsai-mind/core';
 import type { Contact } from '@tsai-mind/core';
 import { ApiError, api, errorMessage } from '../api/client';
 import { todaySections, type PendingChange, type TodayEntry, type TodayResponse, type TodaySections } from '../api/types';
@@ -9,12 +10,16 @@ import { usePending } from './pending';
 
 interface TodayState {
   sections: TodaySections | null;
+  /** Due within the 7 days after tomorrow (the「本周还有 n 项」row); computed from the project trees. */
+  week: TodayEntry[];
+  today: string;
   pending: PendingChange[];
   contacts: Contact[];
   loading: boolean;
   error: string | null;
   fromCache: boolean;
   load: () => Promise<void>;
+  loadWeek: () => Promise<void>;
   decide: (c: PendingChange, decision: 'approve' | 'reject') => Promise<void>;
   /** Returns the nudge text for the share sheet. */
   nudge: (e: TodayEntry) => Promise<string | null>;
@@ -40,11 +45,13 @@ export const useToday = create<TodayState>((set, get) => {
     const s = get().sections;
     if (!s) return;
     const f = (l: TodayEntry[]) => l.filter((x) => x.node.id !== nodeId);
-    set({ sections: { overdue: f(s.overdue), dueToday: f(s.dueToday), dueTomorrow: f(s.dueTomorrow), nudgeDue: f(s.nudgeDue) } });
+    set({ sections: { overdue: f(s.overdue), dueToday: f(s.dueToday), dueTomorrow: f(s.dueTomorrow), nudgeDue: f(s.nudgeDue) }, week: f(get().week) });
   };
 
   return {
     sections: null,
+    week: [],
+    today: toISODate(new Date()),
     pending: [],
     contacts: [],
     loading: false,
@@ -57,13 +64,43 @@ export const useToday = create<TodayState>((set, get) => {
         const [t, c] = await Promise.all([api.today(), api.listContacts().catch(() => get().contacts)]);
         noteOnline();
         const sections = todaySections(t);
-        set({ sections, pending: t.pending ?? [], contacts: c, loading: false, error: null, fromCache: false });
+        set({ sections, pending: t.pending ?? [], contacts: c, loading: false, error: null, fromCache: false, today: toISODate(new Date()) });
         void snapshots.saveGeneric(CACHE_KEY, { t, c });
+        void get().loadWeek();
       } catch (e) {
         const cached = await snapshots.loadGeneric<{ t: TodayResponse; c: Contact[] }>(CACHE_KEY);
         if (cached && !get().sections) set({ sections: todaySections(cached.t), pending: cached.t.pending ?? [], contacts: cached.c, fromCache: true });
         set({ loading: false, error: errorMessage(e) });
       }
+    },
+
+    loadWeek: async () => {
+      // the server's /api/today stops at tomorrow; walk the (cached) project trees for the rest of the week
+      const t = get().today;
+      const from = addDays(t, 2);
+      const to = addDays(t, 8);
+      const st = useProjects.getState();
+      let rows: { id: string; name: string }[] = [];
+      try {
+        rows = (await api.listProjects()).filter((p) => !p.archivedAt);
+      } catch {
+        rows = Object.values(st.projects)
+          .filter((lp) => lp.project)
+          .map((lp) => ({ id: lp.id, name: lp.project!.name }));
+      }
+      const week: TodayEntry[] = [];
+      for (const p of rows) {
+        const lp = await st.load(p.id);
+        if (!lp?.project) continue;
+        for (const n of lp.store.all()) {
+          const d = lp.derived.get(n.id);
+          if (!d || d.hasChildren || n.kind === 'note' || d.status === 'done' || !d.dueDate) continue;
+          if (d.dueDate < from || d.dueDate > to) continue;
+          week.push({ node: n, derived: d, path: lp.store.path(n.id), projectId: p.id, projectName: p.name, daysOverdue: daysBetween(d.dueDate, t) });
+        }
+      }
+      week.sort((a, b) => (a.derived.dueDate! < b.derived.dueDate! ? -1 : a.derived.dueDate! > b.derived.dueDate! ? 1 : a.node.priority - b.node.priority));
+      set({ week });
     },
 
     decide: async (c, decision) => {

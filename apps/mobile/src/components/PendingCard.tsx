@@ -4,11 +4,14 @@ import { C, FONT, MONO } from '../theme';
 import { FIELD_LABEL, valueLabel } from '../lib/util';
 import { Btn } from './ui';
 
-/** Light-orange card with a 3px orange bar (design-system §5) and 确认 / 拒绝. */
+/**
+ * The one pending card (Main.dc.html / Node.dc.html): light-orange, radius 12, padding 14/16;
+ * 「Claude 提议 · 节点」13 ink2, the diff 17/500 (dates in mono), the reason 14 ink2,
+ * 确认 (orange, grows) and 拒绝 (white, 96 wide).
+ */
 export function PendingCard({
   change,
   title,
-  subtitle,
   contacts,
   onApprove,
   onReject,
@@ -17,7 +20,6 @@ export function PendingCard({
 }: {
   change: Change;
   title: string;
-  subtitle?: string;
   contacts: Contact[];
   onApprove: () => void;
   onReject: () => void;
@@ -26,41 +28,39 @@ export function PendingCard({
 }) {
   const c = change;
   const dateish = c.field === 'dueDate' || c.field === 'startDate';
+  const who = c.source === 'claude' ? 'Claude 提议' : '批量操作';
   return (
     <View style={s.card} testID={`change-${c.id}`}>
-      <Pressable onPress={onOpen} disabled={!onOpen}>
-        <Text style={s.title} numberOfLines={1}>
-          {title}
+      <Pressable onPress={onOpen} disabled={!onOpen} style={{ gap: 10 }}>
+        <Text style={s.meta} numberOfLines={1}>
+          {who} · {title}
         </Text>
-        <Text style={s.meta}>
-          {subtitle ? `${subtitle} · ` : ''}
-          {c.source === 'claude' ? '经 Claude' : '批量操作'}
-        </Text>
-        <View style={s.diffRow}>
-          <Text style={s.diffLabel}>{FIELD_LABEL[c.field] ?? c.field}</Text>
-          {c.field !== 'delete' && (
-            <Text style={[s.diffValue, dateish && { fontFamily: MONO }]}>
-              {valueLabel(c.field, c.oldValue, contacts)} → {valueLabel(c.field, c.newValue, contacts)}
-            </Text>
+        <Text style={s.diff}>
+          {c.field === 'delete' ? (
+            '删除这个节点'
+          ) : (
+            <>
+              {FIELD_LABEL[c.field] ?? c.field}{' '}
+              <Text style={dateish && { fontFamily: MONO }}>
+                {valueLabel(c.field, c.oldValue, contacts)} → {valueLabel(c.field, c.newValue, contacts)}
+              </Text>
+            </>
           )}
-        </View>
+        </Text>
         {c.reason ? <Text style={s.reason}>{c.reason}</Text> : null}
       </Pressable>
       <View style={s.actions}>
-        <Btn title="确认" kind="primary" small onPress={onApprove} disabled={busy} testID={`approve-${c.id}`} />
-        <Btn title="拒绝" small onPress={onReject} disabled={busy} testID={`reject-${c.id}`} />
+        <Btn title="确认" kind="primary" grow onPress={onApprove} disabled={busy} testID={`approve-${c.id}`} />
+        <Btn title="拒绝" width={96} onPress={onReject} disabled={busy} testID={`reject-${c.id}`} />
       </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  card: { backgroundColor: C.orangeSoft, borderLeftWidth: 3, borderLeftColor: C.orange, marginHorizontal: 16, marginBottom: 10, padding: 12, borderRadius: 6, gap: 6 },
-  title: { fontSize: FONT.body, fontWeight: '600', color: C.ink },
-  meta: { fontSize: FONT.tiny, color: C.ink2, marginTop: 1 },
-  diffRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 4, flexWrap: 'wrap' },
-  diffLabel: { fontSize: FONT.small, color: C.ink2 },
-  diffValue: { fontSize: FONT.body, color: C.ink, fontWeight: '500' },
-  reason: { fontSize: FONT.small, color: C.ink2, marginTop: 2 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  card: { backgroundColor: C.orangeSoft, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, gap: 10 },
+  meta: { fontSize: FONT.small, color: C.ink2 },
+  diff: { fontSize: FONT.title, fontWeight: '500', color: C.ink },
+  reason: { fontSize: FONT.meta, color: C.ink2 },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 4 },
 });

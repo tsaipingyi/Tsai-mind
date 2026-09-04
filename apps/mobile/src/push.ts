@@ -60,21 +60,21 @@ export function routeFor(data: PushData | null | undefined): string | null {
   if (!data || typeof data !== 'object') return null;
   switch (data.kind) {
     case 'change':
-      return data.nodeId ? `/node/${data.nodeId}` : '/pending';
+      return data.nodeId ? `/projects/node/${data.nodeId}` : '/pending';
     case 'batch':
       return '/pending';
     case 'due':
     case 'nudge':
-      return data.nodeId ? `/node/${data.nodeId}` : '/';
+      return data.nodeId ? `/projects/node/${data.nodeId}` : '/';
     case 'digest':
       return '/';
     case 'dependency_slip': {
       // open the successor (the task that can no longer start on time)
       const id = data.nodeId ?? data.toNode;
-      return id ? `/node/${id}` : '/';
+      return id ? `/projects/node/${id}` : '/';
     }
     default:
-      return data.nodeId ? `/node/${data.nodeId}` : null;
+      return data.nodeId ? `/projects/node/${data.nodeId}` : null;
   }
 }
 

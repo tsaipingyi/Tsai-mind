@@ -1,6 +1,22 @@
-// API fixtures for the Playwright smoke run: project 官网改版 with 8 nodes, one pending change, one overdue node.
-const NOW = '2026-09-01T08:00:00.000Z';
+// API fixtures for the Playwright smoke run: project 官网改版 with an overdue task, two due today, one tomorrow,
+// two later this week, a dependency slip, one pending change, one draft batch, two assistant sessions.
+// Dates are relative to the real day so 今天's lists (computed against `new Date()`) stay stable.
 export const PROJECT_ID = 'p1';
+
+const pad = (n) => String(n).padStart(2, '0');
+/** ISO date `days` from today (local time, like the app's `today()`). */
+export function iso(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+/** "9/4" like core `shortDate` for the current year. */
+export function short(days) {
+  const [, m, d] = iso(days).split('-').map(Number);
+  return `${m}/${d}`;
+}
+const at = (days, hour = 8) => `${iso(days)}T${pad(hour)}:00:00.000Z`;
+const NOW = at(-3);
 
 export const contacts = [
   { id: 'c_lin', name: '林', company: '设计工作室', email: null, phone: null, notes: null, archivedAt: null },
@@ -35,12 +51,16 @@ function n(partial) {
 export const nodes = [
   n({ id: 'root', parentId: null, rank: 'V', title: '官网改版', kind: 'goal' }),
   n({ id: 'design', parentId: 'root', rank: 'V', title: '设计', ownerId: 'c_lin' }),
-  n({ id: 'visual', parentId: 'design', rank: 'V', title: '视觉稿', ownerId: 'c_lin', startDate: '2026-09-01', dueDate: '2026-09-08', status: 'done', progress: 100 }),
-  n({ id: 'proto', parentId: 'design', rank: 'k', title: '交互原型', ownerId: 'c_lin', startDate: '2026-09-05', dueDate: '2026-09-12', status: 'done', progress: 100 }),
+  n({ id: 'visual', parentId: 'design', rank: 'V', title: '视觉稿', ownerId: 'c_lin', startDate: iso(-10), dueDate: iso(-3), status: 'done', progress: 100 }),
+  n({ id: 'proto', parentId: 'design', rank: 'k', title: '交互原型', ownerId: 'c_lin', startDate: iso(-6), dueDate: iso(2), status: 'done', progress: 100 }),
+  n({ id: 'review', parentId: 'design', rank: 's', title: '视觉稿复审', startDate: iso(-1), dueDate: iso(0), priority: 2 }),
   n({ id: 'dev', parentId: 'root', rank: 'k', title: '开发', ownerId: 'c_wang' }),
-  n({ id: 'fe', parentId: 'dev', rank: 'V', title: '前端页面', ownerId: 'c_wang', startDate: '2026-09-08', dueDate: '2026-09-24', status: 'in_progress', progress: 60, estimateHours: 40 }),
-  n({ id: 'api', parentId: 'dev', rank: 'k', title: '接口联调', ownerId: 'c_chen', startDate: '2026-09-15', dueDate: '2026-08-30', status: 'blocked', progress: 10, estimateHours: 24, lastNudgedAt: '2026-08-29T02:00:00.000Z' }),
-  n({ id: 'launch', parentId: 'root', rank: 's', title: '上线', kind: 'milestone', dueDate: '2026-10-10' }),
+  n({ id: 'fe', parentId: 'dev', rank: 'V', title: '前端页面', ownerId: 'c_wang', startDate: iso(-15), dueDate: iso(1), status: 'in_progress', progress: 60, estimateHours: 40 }),
+  n({ id: 'api', parentId: 'dev', rank: 'k', title: '接口联调', ownerId: 'c_chen', startDate: iso(-8), dueDate: iso(-4), status: 'blocked', progress: 10, estimateHours: 24, lastNudgedAt: at(-3, 2) }),
+  n({ id: 'track', parentId: 'dev', rank: 's', title: '埋点接入', ownerId: 'c_wang', startDate: iso(-2), dueDate: iso(0), status: 'in_progress', progress: 30, priority: 1 }),
+  n({ id: 'seo', parentId: 'dev', rank: 'w', title: 'SEO 检查', ownerId: 'c_wang', startDate: iso(1), dueDate: iso(3) }),
+  n({ id: 'copy', parentId: 'dev', rank: 'y', title: '文案校对', startDate: iso(2), dueDate: iso(5) }),
+  n({ id: 'launch', parentId: 'root', rank: 's', title: '上线', kind: 'milestone', dueDate: iso(36) }),
 ];
 
 export const project = { id: PROJECT_ID, name: '官网改版', rootNodeId: 'root', createdAt: NOW, archivedAt: null };
@@ -50,15 +70,15 @@ export const pendingChanges = [
     id: 'ch1',
     nodeId: 'api',
     field: 'dueDate',
-    oldValue: '2026-08-30',
-    newValue: '2026-10-05',
+    oldValue: iso(-4),
+    newValue: iso(5),
     reason: '前端页面还没完成，接口联调顺延',
     source: 'claude',
     batchId: null,
     status: 'pending',
     decidedAt: null,
     createdAt: NOW,
-    expiresAt: '2026-09-08T08:00:00.000Z',
+    expiresAt: at(4),
   },
 ];
 
@@ -73,41 +93,39 @@ export const me = {
   scopes: ['read', 'write', 'decide'],
 };
 
-// phase-3 server: critical path (root → latest due child … → leaf) and dependency slips (fe due 9/24 > api start 9/15)
+// phase-3 server: critical path and a dependency slip (fe due tomorrow > api start 8 days ago → 9 days)
 export const criticalPath = ['root', 'launch'];
-export const slips = [{ fromNode: 'fe', toNode: 'api', fromDue: '2026-09-24', toStart: '2026-09-15', days: 9 }];
+export const slips = [{ fromNode: 'fe', toNode: 'api', fromDue: iso(1), toStart: iso(-8), days: 9 }];
 
 export const projectDetail = { project, nodes, contacts, pendingChanges, dependencies: [{ fromNode: 'fe', toNode: 'api' }], serverSeq: 42, criticalPath, slips };
 export const projectRows = [{ ...project, overdueCount: 1, pendingCount: 1 }];
 
-const apiEntry = {
-  node: nodes[6],
-  derived: { progress: 10, startDate: '2026-09-15', dueDate: '2026-08-30', status: 'blocked', hasChildren: false, leafCount: 1, doneLeafCount: 0 },
-  path: ['官网改版', '开发'],
-  projectId: PROJECT_ID,
-  projectName: '官网改版',
-  daysOverdue: 4,
+const byId = Object.fromEntries(nodes.map((x) => [x.id, x]));
+const entry = (id, path, extra = {}) => {
+  const node = byId[id];
+  const days = Math.round((new Date(iso(0)) - new Date(node.dueDate)) / 86400000);
+  return {
+    node,
+    derived: { progress: node.progress, startDate: node.startDate, dueDate: node.dueDate, status: node.status, hasChildren: false, leafCount: 1, doneLeafCount: 0, ...extra },
+    path,
+    projectId: PROJECT_ID,
+    projectName: '官网改版',
+    daysOverdue: days,
+  };
 };
-const feEntry = {
-  node: nodes[5],
-  derived: { progress: 60, startDate: '2026-09-08', dueDate: '2026-09-24', status: 'in_progress', hasChildren: false, leafCount: 1, doneLeafCount: 0 },
-  path: ['官网改版', '开发'],
-  projectId: PROJECT_ID,
-  projectName: '官网改版',
-  daysOverdue: -21,
-};
+const apiEntry = entry('api', ['官网改版', '开发']);
 
 export const todayResponse = {
-  today: '2026-09-03',
+  today: iso(0),
   overdue: [apiEntry],
-  dueToday: [],
-  dueTomorrow: [feEntry],
+  dueToday: [entry('track', ['官网改版', '开发']), entry('review', ['官网改版', '设计'])],
+  dueTomorrow: [entry('fe', ['官网改版', '开发'])],
   nudgeDue: [apiEntry],
   pending: pendingChanges.map((c) => ({ ...c, nodeTitle: '接口联调', projectId: PROJECT_ID, projectName: '官网改版' })),
 };
 
 export const nodeDetail = {
-  node: nodes[6],
+  node: byId.api,
   derived: apiEntry.derived,
   path: ['官网改版', '开发'],
   projectId: PROJECT_ID,
@@ -117,9 +135,9 @@ export const nodeDetail = {
   blocks: [],
   notes: [],
   activity: [
-    { id: 1, nodeId: 'api', actor: 'claude', kind: 'change_proposed', payload: { field: 'dueDate', to: '2026-10-05' }, createdAt: '2026-09-01T08:00:00.000Z' },
-    { id: 2, nodeId: 'api', actor: 'user', kind: 'nudged', payload: {}, createdAt: '2026-08-29T02:00:00.000Z' },
-    { id: 3, nodeId: 'api', actor: 'user', kind: 'field_changed', payload: { fields: { status: { from: 'in_progress', to: 'blocked' } } }, createdAt: '2026-08-27T09:00:00.000Z' },
+    { id: 1, nodeId: 'api', actor: 'claude', kind: 'change_proposed', payload: { field: 'dueDate', to: iso(5) }, createdAt: at(-1) },
+    { id: 2, nodeId: 'api', actor: 'user', kind: 'nudged', payload: {}, createdAt: at(-3, 2) },
+    { id: 3, nodeId: 'api', actor: 'user', kind: 'field_changed', payload: { fields: { status: { from: 'in_progress', to: 'blocked' } } }, createdAt: at(-5) },
   ],
   pendingChanges,
 };
@@ -146,20 +164,20 @@ export const draftBatch = {
 export const assistantStatus = { configured: true, model: 'claude-opus-5' };
 
 export const sessions = [
-  { id: 's1', title: '接口联调怎么办', projectId: PROJECT_ID, lastText: '我已经提议把「接口联调」的截止日推到 10/5，等你确认。', createdAt: '2026-09-02T02:00:00.000Z', updatedAt: '2026-09-03T01:30:00.000Z' },
-  { id: 's2', title: null, projectId: null, lastText: '这周有 1 个逾期任务：接口联调（陈小明）。', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:10:00.000Z' },
+  { id: 's1', title: '接口联调怎么办', projectId: PROJECT_ID, lastText: `我已经提议把「接口联调」的截止日推到 ${short(5)}，等你确认。`, createdAt: at(-2, 2), updatedAt: at(-1, 1) },
+  { id: 's2', title: null, projectId: null, lastText: '这周有 1 个逾期任务：接口联调（陈小明）。', createdAt: at(-3, 0), updatedAt: at(-3, 0) },
 ];
 
 export const sessionDetail = {
   session: sessions[0],
   messages: [
-    { id: 'm1', role: 'user', text: '接口联调已经逾期了，怎么办？', toolCalls: [], createdAt: '2026-09-03T01:29:00.000Z' },
+    { id: 'm1', role: 'user', text: '接口联调已经逾期了，怎么办？', toolCalls: [], createdAt: at(-1, 1) },
     {
       id: 'm2',
       role: 'assistant',
-      text: '「接口联调」原定 8/30，负责人陈小明，前置任务「前端页面」要到 9/24 才完成，所以这个截止日本来就不现实。我建议推到 10/5，并催一下陈小明。',
-      toolCalls: [{ name: 'get_node', input: { node_id: 'api' }, resultText: '{"id":"api","title":"接口联调","status":"blocked","dueDate":"2026-08-30"}' }],
-      createdAt: '2026-09-03T01:30:00.000Z',
+      text: `「接口联调」原定 ${short(-4)}，负责人陈小明，前置任务「前端页面」要到 ${short(1)} 才完成，所以这个截止日本来就不现实。我建议推到 ${short(5)}，并催一下陈小明。`,
+      toolCalls: [{ name: 'get_node', input: { node_id: 'api' }, resultText: `{"id":"api","title":"接口联调","status":"blocked","dueDate":"${iso(-4)}"}` }],
+      createdAt: at(-1, 1),
     },
   ],
 };
@@ -170,16 +188,16 @@ export const sseReply = [
   'data: {"delta":"好，我把「接口联调」的截止日"}',
   '',
   'event: text',
-  'data: {"delta":"改成 10/5。"}',
+  `data: {"delta":"改成 ${short(5)}。"}`,
   '',
   'event: tool',
-  'data: {"name":"update_node","input":{"node_id":"api","version":1,"patch":{"dueDate":"2026-10-05"},"reason":"前端页面 9/24 才完成"},"result":{"status":"pending","change_id":"ch2"}}',
+  `data: {"name":"update_node","input":{"node_id":"api","version":1,"patch":{"dueDate":"${iso(5)}"},"reason":"前端页面 ${short(1)} 才完成"},"result":{"status":"pending","change_id":"ch2"}}`,
   '',
   'event: text',
   'data: {"delta":"这是关键字段，已经进了「待确认」，你确认后生效。"}',
   '',
   'event: done',
-  'data: {"messageId":"m4","text":"好，我把「接口联调」的截止日改成 10/5。这是关键字段，已经进了「待确认」，你确认后生效。"}',
+  `data: {"messageId":"m4","text":"好，我把「接口联调」的截止日改成 ${short(5)}。这是关键字段，已经进了「待确认」，你确认后生效。"}`,
   '',
   '',
 ].join('\n');

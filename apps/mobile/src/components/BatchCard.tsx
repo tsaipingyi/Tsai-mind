@@ -99,20 +99,20 @@ export function BatchCard({
         </View>
       )}
       <View style={s.actions}>
-        <Btn title="丢弃" small disabled={busy} onPress={() => void run(onDiscard)} />
-        <Btn title="应用" small kind="primary" disabled={busy || (sm.delete > 0 && !ack) || batch.diff.errors.length > 0} onPress={() => void run(onApply)} />
+        <Btn title="应用" kind="primary" grow disabled={busy || (sm.delete > 0 && !ack) || batch.diff.errors.length > 0} onPress={() => void run(onApply)} testID={`apply-${batch.id}`} />
+        <Btn title="丢弃" width={96} disabled={busy} onPress={() => void run(onDiscard)} testID={`discard-${batch.id}`} />
       </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  card: { borderWidth: 1, borderColor: C.line, borderRadius: 8, marginHorizontal: 16, marginBottom: 10, padding: 12, gap: 4 },
-  title: { fontSize: FONT.body, fontWeight: '600', color: C.ink },
-  meta: { fontSize: FONT.tiny, color: C.ink2 },
-  summary: { fontSize: FONT.small, color: C.ink2, fontFamily: MONO, marginTop: 2 },
-  block: { marginTop: 6, gap: 2 },
-  blockTitle: { fontSize: FONT.tiny, color: C.ink3, fontWeight: '600' },
-  item: { fontSize: FONT.small, color: C.ink },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
+  card: { backgroundColor: C.orangeSoft, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, gap: 6 },
+  title: { fontSize: FONT.title, fontWeight: '500', color: C.ink },
+  meta: { fontSize: FONT.small, color: C.ink2 },
+  summary: { fontSize: FONT.meta, color: C.ink2, fontFamily: MONO },
+  block: { marginTop: 4, gap: 2 },
+  blockTitle: { fontSize: FONT.small, color: C.ink2 },
+  item: { fontSize: FONT.meta, color: C.ink },
+  actions: { flexDirection: 'row', gap: 10, marginTop: 8 },
 });

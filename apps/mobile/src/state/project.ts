@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { TreeStore, computeRollup, addDays, computeCriticalPath, findDependencySlips } from '@tsai-mind/core';
+import { TreeStore, computeRollup, addDays, computeCriticalPath, findDependencySlips, rankBetween } from '@tsai-mind/core';
 import type { Change, Contact, Dependency, Derived, NodePatch, Op, Project, TNode } from '@tsai-mind/core';
 import { api, errorMessage, isNetworkError } from '../api/client';
 import type { PlanBatch, Slip } from '../api/types';
@@ -37,6 +37,8 @@ interface ProjectsState {
   load: (id: string, opts?: { force?: boolean }) => Promise<LoadedProject | null>;
   reload: (id: string) => Promise<void>;
   updateNode: (projectId: string, nodeId: string, patch: NodePatch) => boolean;
+  /** Append an empty child under `parentId` (the「+」button); returns the new node id or null. */
+  createChild: (projectId: string, parentId: string, title?: string) => string | null;
   deleteNode: (projectId: string, nodeId: string) => boolean;
   markDone: (projectId: string, nodeId: string) => boolean;
   postpone: (projectId: string, nodeId: string, days?: number) => boolean;
@@ -295,6 +297,18 @@ export const useProjects = create<ProjectsState>((set, get) => {
       }
       if (!Object.keys(eff).length) return true;
       return dispatch({ ...opBase(projectId), type: 'update_node', nodeId, patch: eff, baseVersion: n.version });
+    },
+
+    createChild: (projectId, parentId, title = '') => {
+      const lp = get().projects[projectId];
+      const parent = lp?.store.live(parentId);
+      if (!lp || !parent) return null;
+      const siblings = lp.store.children(parentId);
+      const last = siblings.at(-1)?.rank ?? null;
+      const id = uuid();
+      const ok = dispatch({ ...opBase(projectId), type: 'create_node', node: { id, projectId, parentId, rank: rankBetween(last, null), title } });
+      if (ok) void rememberNodes(projectId, [id]);
+      return ok ? id : null;
     },
 
     deleteNode: (projectId, nodeId) => {

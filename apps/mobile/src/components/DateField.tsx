@@ -3,10 +3,11 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-na
 import type { ISODate } from '@tsai-mind/core';
 import { C, FONT, MONO, RADIUS } from '../theme';
 import { dateToISO, isISODateString, isoToDate } from '../lib/util';
+import { Chevron } from './ui';
 
 /**
- * Date row with the native picker (iOS inline calendar / Android dialog).
- * On web (only used for visual verification) it is a YYYY-MM-DD text field.
+ * A 52px card row (Node.dc.html): label 16 (80 wide), value 16 mono, trailing ›.
+ * Tap opens the native picker (iOS inline calendar / Android dialog); on web (visual check only) a YYYY-MM-DD field.
  */
 export function DateField({
   label,
@@ -15,13 +16,21 @@ export function DateField({
   disabled,
   note,
   overdue,
+  overdueDays,
+  last,
+  testID,
 }: {
   label: string;
   value: ISODate | null;
   onChange: (v: ISODate | null) => void;
   disabled?: boolean;
+  /** shown in place of the chevron, e.g. 由子节点推导 */
   note?: string;
   overdue?: boolean;
+  overdueDays?: number;
+  /** no bottom line (last row of the card) */
+  last?: boolean;
+  testID?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
@@ -61,59 +70,71 @@ export function DateField({
     );
   } else if (open && Platform.OS === 'web') {
     picker = (
-      <View style={{ flexDirection: 'row', gap: 8, paddingBottom: 10 }}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor={C.ink3}
-          autoFocus
-          style={s.input}
-          onSubmitEditing={() => {
-            if (isISODateString(draft)) {
-              onChange(draft);
-              setOpen(false);
-            }
-          }}
-          onBlur={() => {
-            if (isISODateString(draft)) onChange(draft);
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        placeholder="YYYY-MM-DD"
+        placeholderTextColor={C.ink3}
+        autoFocus
+        style={s.input}
+        testID={testID ? `${testID}-input` : undefined}
+        onSubmitEditing={() => {
+          if (isISODateString(draft)) {
+            onChange(draft);
             setOpen(false);
-          }}
-        />
-      </View>
+          }
+        }}
+        onBlur={() => {
+          if (isISODateString(draft)) onChange(draft);
+          setOpen(false);
+        }}
+      />
     );
   }
 
+  const text = value ? `${fmtShort(value)}${overdue && overdueDays ? ` · 逾期 ${overdueDays} 天` : ''}` : '未设';
   return (
-    <View>
-      <Pressable onPress={() => void openPicker()} disabled={disabled} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.paper2 }]}>
+    <View style={[!last && s.lined]}>
+      <Pressable onPress={() => void openPicker()} disabled={disabled} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.paper2 }]} testID={testID}>
         <Text style={s.label}>{label}</Text>
-        <View style={{ flex: 1 }} />
-        {note ? <Text style={s.note}>{note}</Text> : null}
-        <Text style={[s.value, !value && { color: C.ink3 }, overdue && { color: C.red }, disabled && { color: C.ink3 }]}>{value ?? '未设'}</Text>
-        {value && !disabled && (
-          <Pressable
-            hitSlop={8}
-            onPress={() => {
-              onChange(null);
-              setOpen(false);
-            }}
-            accessibilityLabel={`清除${label}`}
-          >
-            <Text style={s.clear}>×</Text>
-          </Pressable>
-        )}
+        <Text style={[s.value, !value && { color: C.ink3 }, overdue && { color: C.red }, disabled && { color: C.ink3 }]} numberOfLines={1}>
+          {text}
+        </Text>
+        {note ? <Text style={s.note}>{note}</Text> : !disabled ? <Chevron /> : null}
       </Pressable>
-      {picker}
+      {picker ? (
+        <View style={s.pickerWrap}>
+          {picker}
+          {value && !disabled ? (
+            <Pressable
+              hitSlop={8}
+              onPress={() => {
+                onChange(null);
+                setOpen(false);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={s.clear}>清除{label}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
 
+function fmtShort(iso: ISODate): string {
+  const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
+  return y === new Date().getFullYear() ? `${m}/${d}` : iso;
+}
+
 const s = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderColor: C.line },
-  label: { fontSize: FONT.body, color: C.ink },
-  note: { fontSize: FONT.tiny, color: C.ink3 },
-  value: { fontFamily: MONO, fontSize: FONT.body, color: C.ink },
-  clear: { fontSize: 18, color: C.ink3, paddingHorizontal: 4 },
-  input: { flex: 1, borderWidth: 1, borderColor: C.line, borderRadius: RADIUS, paddingHorizontal: 10, paddingVertical: 8, fontFamily: MONO, fontSize: FONT.body, color: C.ink },
+  lined: { borderBottomWidth: 1, borderColor: C.line },
+  row: { flexDirection: 'row', alignItems: 'center', height: 52, paddingHorizontal: 16 },
+  label: { fontSize: FONT.input, color: C.ink, width: 80 },
+  value: { flexGrow: 1, flexShrink: 1, fontSize: FONT.input, color: C.ink, fontFamily: MONO },
+  note: { fontSize: FONT.small, color: C.ink3 },
+  pickerWrap: { paddingHorizontal: 16, paddingBottom: 12, gap: 8 },
+  clear: { fontSize: FONT.small, color: C.ink2 },
+  input: { borderWidth: 1, borderColor: C.line, borderRadius: RADIUS, paddingHorizontal: 10, paddingVertical: 8, fontFamily: MONO, fontSize: FONT.input, color: C.ink },
 });
