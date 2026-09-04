@@ -6,3 +6,4 @@ export * from './dates.js';
 export * from './rules.js';
 export * from './today.js';
 export * from './outline.js';
+export * from './schedule.js';
