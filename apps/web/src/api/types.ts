@@ -1,12 +1,87 @@
-import type { Change, Contact, Dependency, Derived, Op, Project, TNode } from '@tsai-mind/core';
+import type { Change, Contact, Dependency, Derived, KeyField, Op, Project, TNode } from '@tsai-mind/core';
+
+export interface NotificationToggles {
+  dueSoon?: boolean;
+  overdue?: boolean;
+  nudgeDue?: boolean;
+  digest?: boolean;
+}
+
+export interface AccountSettings {
+  requireConfirmation?: boolean;
+  keyFields?: KeyField[];
+  nudgeTemplate?: string;
+  notifications?: NotificationToggles;
+}
 
 export interface Account {
   id: string;
   email: string;
   name: string;
   timezone: string;
-  settings: Record<string, unknown>;
+  settings: AccountSettings;
 }
+
+export interface MePatch {
+  name?: string;
+  timezone?: string;
+  settings?: AccountSettings;
+}
+
+export interface TokenSummary {
+  id: string;
+  label: string;
+  kind: string;
+  clientName?: string | null;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  revokedAt?: string | null;
+}
+
+/** A predecessor whose due date has moved past a successor's start (server shape; core's DependencySlip carries nodes). */
+export interface Slip {
+  fromNode: string;
+  toNode: string;
+  fromDue: string;
+  toStart: string;
+  days: number;
+}
+
+// ---- assistant (Claude chat) ----
+export interface AssistantStatus {
+  configured: boolean;
+  model?: string | null;
+}
+
+export interface AssistantSession {
+  id: string;
+  title: string | null;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ToolCall {
+  name: string;
+  input: unknown;
+  resultText?: string | null;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  toolCalls?: ToolCall[];
+  createdAt?: string;
+}
+
+export type AssistantEvent =
+  | { event: 'text'; delta: string }
+  | { event: 'tool'; name: string; input: unknown; result: unknown }
+  | { event: 'done'; messageId: string; text: string }
+  | { event: 'error'; message: string };
 
 export interface MeResponse {
   account: Account;
@@ -16,6 +91,8 @@ export interface MeResponse {
 export interface ProjectRow extends Project {
   overdueCount: number;
   pendingCount: number;
+  /** number of slipped dependencies, when the server sends it */
+  slipCount?: number;
 }
 
 export interface ProjectDetail {
@@ -25,6 +102,8 @@ export interface ProjectDetail {
   pendingChanges: Change[];
   dependencies: Dependency[];
   serverSeq: number;
+  criticalPath?: string[];
+  slips?: Slip[];
 }
 
 export interface CreateProjectResponse {

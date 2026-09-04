@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useProject } from '../state/project';
 import { MindMap } from '../editor/MindMap';
 import { OutlineView } from '../editor/Outline';
+import { GanttView } from '../editor/Gantt';
+import { PeopleBoard } from '../editor/PeopleBoard';
 import { Sidebar } from '../editor/Sidebar';
 import { PendingPanel } from '../editor/PendingPanel';
+import { ChatPanel } from '../editor/ChatPanel';
 import { CommandPalette, OwnerPicker, type PaletteActions } from '../editor/Popovers';
 import { useEditorShortcuts } from '../editor/useShortcuts';
 import { Avatar } from '../components/ui';
@@ -32,6 +35,9 @@ export function ProjectEditorPage() {
   const batches = useProject((s) => s.batches);
   const pendingPanelOpen = useProject((s) => s.pendingPanelOpen);
   const setPendingPanel = useProject((s) => s.setPendingPanel);
+  const chatOpen = useProject((s) => s.chatOpen);
+  const setChatOpen = useProject((s) => s.setChatOpen);
+  const slips = useProject((s) => s.slips);
   const selectedId = useProject((s) => s.selectedId);
   const select = useProject((s) => s.select);
   const renameProject = useProject((s) => s.renameProject);
@@ -39,6 +45,16 @@ export function ProjectEditorPage() {
   const rev = useProject((s) => s.rev);
 
   const [popover, setPopover] = useState<'owner' | 'palette' | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!exportRef.current?.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [exportOpen]);
 
   useEffect(() => {
     if (id) void load(id);
@@ -74,6 +90,32 @@ export function ProjectEditorPage() {
     } catch (e) {
       toast(`复制失败：${errorMessage(e)}`, 'error');
     }
+  }, [projectId]);
+
+  const downloadOutline = useCallback(async () => {
+    if (!projectId || !project) return;
+    try {
+      const text = await api.getOutline(projectId);
+      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'outline'}.md`;
+      document.body.appendChild(a);
+      a.click();
+      // keep the anchor (and its download name) alive until the browser has started the download
+      setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 2000);
+    } catch (e) {
+      toast(`下载失败：${errorMessage(e)}`, 'error');
+    }
+  }, [projectId, project]);
+
+  const openPrint = useCallback(() => {
+    if (!projectId) return;
+    window.open(`/projects/${projectId}/print?print=1`, '_blank', 'noopener');
   }, [projectId]);
 
   const shortcutHandlers = useMemo(
@@ -151,6 +193,12 @@ export function ProjectEditorPage() {
           <button role="tab" className={view === 'outline' ? 'active' : ''} onClick={() => setView('outline')}>
             大纲
           </button>
+          <button role="tab" className={view === 'gantt' ? 'active' : ''} onClick={() => setView('gantt')}>
+            甘特
+          </button>
+          <button role="tab" className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+            按人
+          </button>
         </div>
         <div className="owner-filter" title="按负责人筛选">
           <button className={ownerFilter === null ? 'active' : ''} onClick={() => setOwnerFilter(ownerFilter === null ? undefined : null)} title="我">
@@ -164,17 +212,68 @@ export function ProjectEditorPage() {
         </div>
         <input className="input search" placeholder="搜索节点…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="搜索" />
         <div className="grow" />
+        {slips.length > 0 && (
+          <button className="slip-badge clickable" onClick={() => setView('gantt')} title="前置任务延误影响后续任务，点开甘特图查看" data-testid="slip-badge">
+            {slips.length} 处延误
+          </button>
+        )}
         <button className="btn sm" onClick={() => void copyOutline()}>
           复制大纲
         </button>
-        <button className={`btn sm${pendingPanelOpen ? ' active' : ''}`} onClick={() => setPendingPanel(!pendingPanelOpen)} data-testid="pending-toggle">
+        <div className="menu-wrap" ref={exportRef}>
+          <button className={`btn sm${exportOpen ? ' active' : ''}`} onClick={() => setExportOpen(!exportOpen)} aria-haspopup="menu" aria-expanded={exportOpen}>
+            导出 ▾
+          </button>
+          {exportOpen && (
+            <div className="menu" role="menu">
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setExportOpen(false);
+                  void downloadOutline();
+                }}
+              >
+                下载大纲 .md
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setExportOpen(false);
+                  openPrint();
+                }}
+              >
+                打印 / PDF
+              </button>
+            </div>
+          )}
+        </div>
+        <button
+          className={`btn sm${pendingPanelOpen ? ' active' : ''}`}
+          onClick={() => {
+            if (!pendingPanelOpen) setChatOpen(false);
+            setPendingPanel(!pendingPanelOpen);
+          }}
+          data-testid="pending-toggle"
+        >
           待确认 {pendingCount > 0 ? <span className="badge">{pendingCount}</span> : <span className="faint">0</span>}
+        </button>
+        <button
+          className={`btn sm${chatOpen ? ' active' : ''}`}
+          onClick={() => {
+            if (!chatOpen) setPendingPanel(false);
+            setChatOpen(!chatOpen);
+          }}
+          data-testid="chat-toggle"
+          title="和 Claude 对话 (⌘J / Ctrl+J)"
+        >
+          Claude
         </button>
       </div>
       <div className="editor-body">
         <div className="editor-view">
-          {view === 'map' ? <MindMap /> : <OutlineView />}
+          {view === 'map' ? <MindMap /> : view === 'outline' ? <OutlineView /> : view === 'gantt' ? <GanttView /> : <PeopleBoard />}
           {pendingPanelOpen && <PendingPanel onClose={() => setPendingPanel(false)} />}
+          {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
         </div>
         <Sidebar />
       </div>

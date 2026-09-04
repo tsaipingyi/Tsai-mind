@@ -95,8 +95,17 @@ export function Toasts() {
   return (
     <div className="toasts">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`} onClick={() => dismiss(t.id)} role="status">
+        <div key={t.id} className={`toast ${t.kind}`} onClick={() => !t.actions?.length && dismiss(t.id)} role="status">
           {t.text}
+          {t.actions && t.actions.length > 0 && (
+            <div className="toast-actions">
+              {t.actions.map((a) => (
+                <button key={a.label} className={`btn sm${a.primary ? ' primary' : ''}`} onClick={a.run}>
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>

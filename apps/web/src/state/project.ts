@@ -1,13 +1,14 @@
 import { create } from 'zustand';
-import { TreeStore, computeRollup, rankBetween } from '@tsai-mind/core';
+import { TreeStore, computeCriticalPath, computeRollup, findDependencySlips, rankBetween } from '@tsai-mind/core';
 import type { Change, Contact, Dependency, Derived, NewNodeInput, NodePatch, Op, Project, TNode } from '@tsai-mind/core';
 import { api, errorMessage } from '../api/client';
-import type { PlanBatch } from '../api/types';
+import type { PlanBatch, Slip } from '../api/types';
 import { onRealtime, onRealtimeOpen } from '../api/realtime';
 import { toast } from './toast';
 import { clientId } from '../lib/util';
 
-export type ViewMode = 'map' | 'outline';
+export type ViewMode = 'map' | 'outline' | 'gantt' | 'board';
+export type GanttZoom = 'day' | 'week' | 'month';
 
 /** undefined = no filter, null = "me", string = contact id */
 export type OwnerFilter = string | null | undefined;
@@ -23,6 +24,9 @@ interface ProjectState {
   pending: Change[];
   batches: PlanBatch[];
   dependencies: Dependency[];
+  /** root-first chain of node ids (server value on load, recomputed locally after every edit) */
+  criticalPath: string[];
+  slips: Slip[];
   serverSeq: number;
   loading: boolean;
   error: string | null;
@@ -33,7 +37,9 @@ interface ProjectState {
   ownerFilter: OwnerFilter;
   search: string;
   view: ViewMode;
+  ganttZoom: GanttZoom;
   pendingPanelOpen: boolean;
+  chatOpen: boolean;
   /** set by the sidebar/palette to ask a specific control to focus */
   focusRequest: { field: 'dueDate' | 'startDate' | 'progress' | 'title'; n: number } | null;
 
@@ -47,7 +53,11 @@ interface ProjectState {
   setOwnerFilter: (f: OwnerFilter) => void;
   setSearch: (s: string) => void;
   setView: (v: ViewMode) => void;
+  setGanttZoom: (z: GanttZoom) => void;
   setPendingPanel: (open: boolean) => void;
+  setChatOpen: (open: boolean) => void;
+  /** pull ops the server has that we don't (used after Claude edits the project) */
+  syncOps: () => Promise<void>;
   requestFocus: (field: 'dueDate' | 'startDate' | 'progress' | 'title') => void;
 
   updateNode: (id: string, patch: NodePatch) => boolean;
@@ -62,6 +72,10 @@ interface ProjectState {
   applyBatch: (id: string) => Promise<void>;
   discardBatch: (id: string) => Promise<void>;
   nudge: (nodeId: string) => Promise<string | null>;
+
+  addDependency: (fromNode: string, toNode: string) => Promise<boolean>;
+  removeDependency: (fromNode: string, toNode: string) => Promise<boolean>;
+  reloadDependencies: () => Promise<void>;
 }
 
 // ---- outgoing op queue (module-level, one per tab) ----
@@ -77,9 +91,16 @@ function opBase(projectId: string): Pick<Op, 'opId' | 'clientId' | 'projectId' |
 }
 
 export const useProject = create<ProjectState>((set, get) => {
+  const schedule = (store: TreeStore, derived: Map<string, Derived>, deps: Dependency[]) => ({
+    criticalPath: computeCriticalPath(store, derived),
+    slips: findDependencySlips(store, derived, deps).map((x) => ({ fromNode: x.from.id, toNode: x.to.id, fromDue: x.fromDue, toStart: x.toStart, days: x.days })),
+  });
+
   const bump = (partial: Partial<ProjectState> = {}) => {
     const store = partial.store ?? get().store;
-    set({ ...partial, store, rev: get().rev + 1, derived: computeRollup(store) });
+    const derived = computeRollup(store);
+    const deps = partial.dependencies ?? get().dependencies;
+    set({ ...partial, store, rev: get().rev + 1, derived, ...schedule(store, derived, deps) });
   };
 
   const flush = async () => {
@@ -189,7 +210,7 @@ export const useProject = create<ProjectState>((set, get) => {
         store,
         contacts: d.contacts,
         pending: d.pendingChanges.filter((c) => c.status === 'pending'),
-        dependencies: d.dependencies,
+        dependencies: d.dependencies ?? [],
         serverSeq: d.serverSeq,
         loading: false,
         error: null,
@@ -197,6 +218,9 @@ export const useProject = create<ProjectState>((set, get) => {
         editingId: keepUi && st.editingId && store.live(st.editingId) ? st.editingId : null,
         collapsed: keepUi ? st.collapsed : new Set<string>(),
       });
+      // prefer the server's schedule analysis when it sends one
+      if (Array.isArray(d.criticalPath) || Array.isArray(d.slips))
+        set({ ...(Array.isArray(d.criticalPath) ? { criticalPath: d.criticalPath } : {}), ...(Array.isArray(d.slips) ? { slips: d.slips } : {}) });
       // draft batches (best effort; fall back to batches referenced by pending changes)
       let found: PlanBatch[] = [];
       try {
@@ -229,6 +253,8 @@ export const useProject = create<ProjectState>((set, get) => {
     pending: [],
     batches: [],
     dependencies: [],
+    criticalPath: [],
+    slips: [],
     serverSeq: 0,
     loading: false,
     error: null,
@@ -238,7 +264,9 @@ export const useProject = create<ProjectState>((set, get) => {
     ownerFilter: undefined,
     search: '',
     view: 'map',
+    ganttZoom: 'week',
     pendingPanelOpen: false,
+    chatOpen: false,
     focusRequest: null,
 
     load: (id) => loadInto(id, false),
@@ -249,7 +277,7 @@ export const useProject = create<ProjectState>((set, get) => {
     unload: () => {
       loadSeq++;
       queue = [];
-      set({ projectId: null, project: null, store: new TreeStore(), derived: new Map(), selectedId: null, editingId: null, batches: [], pending: [] });
+      set({ projectId: null, project: null, store: new TreeStore(), derived: new Map(), selectedId: null, editingId: null, batches: [], pending: [], dependencies: [], criticalPath: [], slips: [] });
     },
 
     select: (id) => set({ selectedId: id, editingId: get().editingId === id ? get().editingId : null }),
@@ -263,7 +291,10 @@ export const useProject = create<ProjectState>((set, get) => {
     setOwnerFilter: (f) => set({ ownerFilter: f }),
     setSearch: (s) => set({ search: s }),
     setView: (v) => set({ view: v, editingId: null }),
+    setGanttZoom: (z) => set({ ganttZoom: z }),
     setPendingPanel: (open) => set({ pendingPanelOpen: open }),
+    setChatOpen: (open) => set({ chatOpen: open }),
+    syncOps: catchUp,
     requestFocus: (field) => set({ focusRequest: { field, n: (get().focusRequest?.n ?? 0) + 1 } }),
 
     updateNode: (id, patch) => {
@@ -410,6 +441,45 @@ export const useProject = create<ProjectState>((set, get) => {
         toast('草案已丢弃');
       } catch (e) {
         toast(`丢弃失败：${errorMessage(e)}`, 'error');
+      }
+    },
+
+    addDependency: async (fromNode, toNode) => {
+      try {
+        await api.addDependency(fromNode, toNode);
+        const deps = get().dependencies.some((d) => d.fromNode === fromNode && d.toNode === toNode) ? get().dependencies : [...get().dependencies, { fromNode, toNode }];
+        bump({ dependencies: deps });
+        await get().reloadDependencies();
+        return true;
+      } catch (e) {
+        toast(`添加前置失败：${errorMessage(e)}`, 'error');
+        return false;
+      }
+    },
+
+    removeDependency: async (fromNode, toNode) => {
+      try {
+        await api.removeDependency(fromNode, toNode);
+        bump({ dependencies: get().dependencies.filter((d) => !(d.fromNode === fromNode && d.toNode === toNode)) });
+        await get().reloadDependencies();
+        return true;
+      } catch (e) {
+        toast(`移除前置失败：${errorMessage(e)}`, 'error');
+        return false;
+      }
+    },
+
+    reloadDependencies: async () => {
+      const id = get().projectId;
+      if (!id) return;
+      try {
+        const d = await api.getProject(id);
+        if (get().projectId !== id) return;
+        bump({ dependencies: d.dependencies ?? [] });
+        if (Array.isArray(d.slips)) set({ slips: d.slips });
+        if (Array.isArray(d.criticalPath)) set({ criticalPath: d.criticalPath });
+      } catch {
+        /* keep the optimistic list */
       }
     },
 

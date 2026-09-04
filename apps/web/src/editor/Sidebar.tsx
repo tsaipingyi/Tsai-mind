@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { NODE_KINDS, NODE_STATUSES } from '@tsai-mind/core';
+import { NODE_KINDS, NODE_STATUSES, dependencyWouldCycle, isWaitingOnDependency } from '@tsai-mind/core';
 import type { NodeKind, NodeStatus } from '@tsai-mind/core';
 import { useProject } from '../state/project';
 import { api } from '../api/client';
@@ -22,6 +22,11 @@ export function Sidebar() {
   const decideChanges = useProject((s) => s.decideChanges);
   const nudge = useProject((s) => s.nudge);
   const focusRequest = useProject((s) => s.focusRequest);
+  const dependencies = useProject((s) => s.dependencies);
+  const addDependency = useProject((s) => s.addDependency);
+  const removeDependency = useProject((s) => s.removeDependency);
+  const [depQuery, setDepQuery] = useState('');
+  const [depBusy, setDepBusy] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const node = useMemo(() => (selectedId ? store.live(selectedId) : undefined), [store, rev, selectedId]);
@@ -153,6 +158,26 @@ export function Sidebar() {
     if (!text) return;
     const copied = await copyText(text);
     toast(`${copied ? '已复制到剪贴板：\n' : ''}${text}`, 'ok', 8000);
+  };
+
+  const predecessors = dependencies.filter((x) => x.toNode === node.id).map((x) => ({ dep: x, node: store.get(x.fromNode) }));
+  const successors = dependencies.filter((x) => x.fromNode === node.id).map((x) => ({ dep: x, node: store.get(x.toNode) }));
+  const waiting = isWaitingOnDependency(node.id, store, derived, dependencies);
+  const depCandidates = (() => {
+    const q = depQuery.trim().toLowerCase();
+    if (!q) return [];
+    const have = new Set(predecessors.map((p) => p.dep.fromNode));
+    return store
+      .all()
+      .filter((n) => n.id !== node.id && n.parentId !== null && n.kind !== 'note' && !have.has(n.id) && n.title.toLowerCase().includes(q))
+      .slice(0, 8)
+      .map((n) => ({ node: n, cycle: dependencyWouldCycle(dependencies, n.id, node.id) || store.isDescendant(n.id, node.id) || store.isDescendant(node.id, n.id) }));
+  })();
+  const pickPredecessor = async (fromId: string) => {
+    setDepBusy(true);
+    const ok = await addDependency(fromId, node.id);
+    setDepBusy(false);
+    if (ok) setDepQuery('');
   };
 
   const datesAuto = node.dateMode === 'auto';
@@ -323,6 +348,77 @@ export function Sidebar() {
           </label>
         </div>
       </section>
+
+      {!isRoot && (
+        <section data-testid="deps">
+          <h4>
+            依赖
+            {waiting && (
+              <span className="note red" data-testid="waiting">
+                等待中：前置任务未完成
+              </span>
+            )}
+          </h4>
+          <div className="dep-list">
+            {predecessors.length === 0 && <div className="note">没有前置任务</div>}
+            {predecessors.map(({ dep, node: p }) => {
+              const pd = p ? derived.get(p.id) : undefined;
+              const pdone = pd?.status === 'done';
+              return (
+                <div className="dep-item" key={dep.fromNode} data-from={dep.fromNode}>
+                  <span className={`dep-dot st-${pd?.status ?? 'todo'}`} />
+                  <span className="dep-title" title={p?.title}>
+                    {p?.title ?? '（已删除）'}
+                  </span>
+                  <span className="note mono">{pd?.dueDate ? fmtDate(pd.dueDate) : ''}</span>
+                  {!pdone && p && <span className="note">未完成</span>}
+                  <button className="lock" title="移除前置" disabled={depBusy} onClick={() => void removeDependency(dep.fromNode, node.id)} aria-label={`移除前置 ${p?.title ?? ''}`}>
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="dep-add">
+            <input
+              className="input"
+              placeholder="添加前置：输入标题搜索…"
+              value={depQuery}
+              onChange={(e) => setDepQuery(e.target.value)}
+              aria-label="添加前置"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const first = depCandidates.find((c) => !c.cycle);
+                  if (first) void pickPredecessor(first.node.id);
+                } else if (e.key === 'Escape') setDepQuery('');
+              }}
+            />
+            {depQuery.trim() && (
+              <div className="dep-options" role="listbox">
+                {depCandidates.length === 0 && <div className="note" style={{ padding: '4px 8px' }}>没有匹配的节点</div>}
+                {depCandidates.map((c) => (
+                  <button
+                    key={c.node.id}
+                    role="option"
+                    className="dep-option"
+                    disabled={c.cycle || depBusy}
+                    title={c.cycle ? '会形成循环依赖' : store.path(c.node.id).join(' / ')}
+                    onClick={() => void pickPredecessor(c.node.id)}
+                  >
+                    <span className="dep-title">{c.node.title}</span>
+                    <span className="note">{c.cycle ? '会形成循环' : store.path(c.node.id).slice(1).join(' / ')}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {successors.length > 0 && (
+            <div className="note" style={{ marginTop: 6 }}>
+              后续任务：{successors.map(({ node: sN }) => sN?.title ?? '（已删除）').join('、')}
+            </div>
+          )}
+        </section>
+      )}
 
       <section>
         <label className="field" style={{ margin: 0 }}>

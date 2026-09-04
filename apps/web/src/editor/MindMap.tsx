@@ -26,6 +26,7 @@ export function MindMap() {
   const contacts = useProject((s) => s.contacts);
   const ownerFilter = useProject((s) => s.ownerFilter);
   const search = useProject((s) => s.search);
+  const criticalPath = useProject((s) => s.criticalPath);
   const select = useProject((s) => s.select);
   const setEditing = useProject((s) => s.setEditing);
   const toggleCollapse = useProject((s) => s.toggleCollapse);
@@ -38,6 +39,7 @@ export function MindMap() {
   const layout = useMemo(() => computeLayout(store, collapsed), [store, rev, collapsed]);
   const pendingNodeIds = useMemo(() => new Set(pending.map((c) => c.nodeId)), [pending]);
   const contactById = useMemo(() => new Map(contacts.map((c) => [c.id, c])), [contacts]);
+  const critical = useMemo(() => new Set(criticalPath), [criticalPath]);
   const t = today();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,7 +212,8 @@ export function MindMap() {
             if (!ln.parentId) return null;
             const p = layout.nodes.get(ln.parentId)!;
             const active = chain.has(id) && chain.has(ln.parentId);
-            return <path key={id} d={connectorPath(p, ln)} className={active ? 'active' : undefined} />;
+            const crit = critical.has(id) && critical.has(ln.parentId);
+            return <path key={id} d={connectorPath(p, ln)} className={[active ? 'active' : '', crit ? 'critical' : ''].filter(Boolean).join(' ') || undefined} data-critical={crit ? '1' : undefined} />;
           })}
         </svg>
         {layout.order.map((id) => {

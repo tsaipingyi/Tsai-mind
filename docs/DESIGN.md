@@ -312,7 +312,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 
 验收：把手上的项目用贴大纲建进来，一周不再打开 XMind；在 Claude Code 里让 Claude 改一个日期、加三个子任务。
 
-### 第二阶段：iPhone、确认、草案（进行中）
+### 第二阶段：iPhone、确认、草案（已完成，待真机验证）
 
 - iPhone App（Expo，TestFlight）：今天、待确认、节点详情、改状态和进度、催办分享、导图查看
 - 待确认机制与推送，通知卡片上直接确认
@@ -323,7 +323,7 @@ MCP    /mcp                               Streamable HTTP，Authorization: Beare
 
 验收：Claude 在 Claude Code 里改截止日，iPhone 弹通知，卡片上点确认，网页上看到生效；让 Claude 拆一个季度计划，iPhone 上一键应用。
 
-### 第三阶段：时间管理深化、App 内助手（约 3 周）
+### 第三阶段：时间管理深化、App 内助手（已完成，待真机验证）
 
 - 甘特视图，拖动改日期，关键路径
 - 依赖与延误提醒

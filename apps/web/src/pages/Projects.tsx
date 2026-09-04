@@ -49,7 +49,14 @@ export function ProjectsPage() {
           <tbody>
             {active.map((p) => (
               <tr key={p.id} className="link" onClick={() => nav(`/projects/${p.id}`)}>
-                <td style={{ fontWeight: 500 }}>{p.name}</td>
+                <td style={{ fontWeight: 500 }}>
+                  {p.name}
+                  {(p.slipCount ?? 0) > 0 && (
+                    <span className="slip-badge" title="有前置任务延误影响后续任务">
+                      {p.slipCount} 处延误
+                    </span>
+                  )}
+                </td>
                 <td className={`num${p.overdueCount ? ' red' : ' faint'}`}>{p.overdueCount}</td>
                 <td className="num" style={{ color: p.pendingCount ? 'var(--orange-deep)' : 'var(--ink-3)' }}>
                   {p.pendingCount}

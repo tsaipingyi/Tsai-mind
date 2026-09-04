@@ -68,9 +68,37 @@ export const me = {
   scopes: ['read', 'write', 'decide'],
 };
 
-export const projectDetail = { project, nodes, contacts, pendingChanges, dependencies: [{ fromNode: 'fe', toNode: 'api' }], serverSeq: 42 };
+export const slips = [{ fromNode: 'fe', toNode: 'api', fromDue: '2026-09-24', toStart: '2026-09-15', days: 9 }];
+export const criticalPath = ['root', 'launch'];
 
-export const projectRows = [{ ...project, overdueCount: 1, pendingCount: 1 }];
+export const projectDetail = {
+  project,
+  nodes,
+  contacts,
+  pendingChanges,
+  dependencies: [{ fromNode: 'fe', toNode: 'api' }],
+  serverSeq: 42,
+  criticalPath,
+  slips,
+};
+
+export const projectRows = [{ ...project, overdueCount: 1, pendingCount: 1, slipCount: 1 }];
+
+export const tokens = [
+  { id: 'tok_1', label: 'Claude Code', kind: 'pat', clientName: null, scopes: ['read', 'write', 'decide'], createdAt: NOW, lastUsedAt: '2026-09-03T02:00:00.000Z', expiresAt: null, revokedAt: null },
+  { id: 'tok_2', label: 'claude.ai', kind: 'oauth', clientName: 'Claude', scopes: ['read', 'write'], createdAt: NOW, lastUsedAt: null, expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null },
+];
+
+export const assistantStatus = { configured: true, model: 'claude-opus-5' };
+export const assistantSession: { id: string; title: string | null; projectId: string; createdAt: string; updatedAt: string } = { id: 's1', title: null, projectId: PROJECT_ID, createdAt: NOW, updatedAt: NOW };
+
+/** Server-sent events for one assistant reply: text, a tool call that produced a pending change, more text, done. */
+export const assistantStream = [
+  'event: text\ndata: {"delta":"好的，"}\n\n',
+  'event: tool\ndata: {"name":"update_node","input":{"nodeId":"api","patch":{"progress":30}},"result":{"ok":true,"changeIds":["ch2"]}}\n\n',
+  'event: text\ndata: {"delta":"我把**接口联调**的进度改到 30%。\\n\\n- 进度改动直接生效\\n- 截止日改动要你确认"}\n\n',
+  'event: done\ndata: {"messageId":"m2","text":"好的，我把**接口联调**的进度改到 30%。\\n\\n- 进度改动直接生效\\n- 截止日改动要你确认"}\n\n',
+].join('');
 
 export const todayResponse = {
   today: '2026-09-03',

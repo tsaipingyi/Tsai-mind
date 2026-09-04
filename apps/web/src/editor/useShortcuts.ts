@@ -29,6 +29,13 @@ export function useEditorShortcuts(h: ShortcutHandlers) {
       if (h.popoverOpen()) return;
       const mod = e.metaKey || e.ctrlKey;
 
+      if (mod && (e.key === 'j' || e.key === 'J')) {
+        e.preventDefault();
+        if (!st.chatOpen) st.setPendingPanel(false);
+        st.setChatOpen(!st.chatOpen);
+        return;
+      }
+
       if (isTypingTarget(e.target)) {
         // title inputs handle their own keys; other inputs (sidebar) only get Escape
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
@@ -111,7 +118,8 @@ export function useEditorShortcuts(h: ShortcutHandlers) {
           return;
         }
         case 'Escape': {
-          if (st.pendingPanelOpen) st.setPendingPanel(false);
+          if (st.chatOpen) st.setChatOpen(false);
+          else if (st.pendingPanelOpen) st.setPendingPanel(false);
           else if (st.editingId) st.setEditing(null);
           return;
         }

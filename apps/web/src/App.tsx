@@ -7,6 +7,8 @@ import { TodayPage } from './pages/Today';
 import { ProjectsPage } from './pages/Projects';
 import { ProjectEditorPage } from './pages/ProjectEditor';
 import { ContactsPage } from './pages/Contacts';
+import { SettingsPage } from './pages/Settings';
+import { PrintPage } from './pages/Print';
 import { useSession } from './state/session';
 import { onUnauthorized } from './api/client';
 import { startRealtime, stopRealtime } from './api/realtime';
@@ -43,6 +45,14 @@ export function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
+          path="/projects/:id/print"
+          element={
+            <RequireAuth>
+              <PrintPage />
+            </RequireAuth>
+          }
+        />
+        <Route
           element={
             <RequireAuth>
               <Layout />
@@ -54,6 +64,7 @@ export function App() {
           <Route path="/projects/:id" element={<ProjectEditorPage />} />
           <Route path="/contacts" element={<ContactsPage />} />
           <Route path="/contacts/:id" element={<ContactsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

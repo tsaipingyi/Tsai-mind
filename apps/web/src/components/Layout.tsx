@@ -18,6 +18,7 @@ export function Layout() {
           </NavLink>
           <NavLink to="/projects">项目</NavLink>
           <NavLink to="/contacts">联系人</NavLink>
+          <NavLink to="/settings">设置</NavLink>
         </nav>
         <div className="spacer" />
         <div className="account">
