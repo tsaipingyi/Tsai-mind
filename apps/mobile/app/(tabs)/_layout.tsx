@@ -34,6 +34,17 @@ function ProjectsIcon({ color }: { color: string }) {
   );
 }
 
+function ClaudeIcon({ color }: { color: string }) {
+  return (
+    <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A3.5 3.5 0 0 1 4 12.5v-6Z" stroke={color} strokeWidth={1.8} strokeLinejoin="round" />
+      <Circle cx={9} cy={9.7} r={1.1} fill={color} />
+      <Circle cx={12} cy={9.7} r={1.1} fill={color} />
+      <Circle cx={15} cy={9.7} r={1.1} fill={color} />
+    </Svg>
+  );
+}
+
 export default function TabsLayout() {
   const badge = usePending(pendingCount);
   const insets = useSafeAreaInsets();
@@ -59,6 +70,7 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen name="projects" options={{ title: '项目', tabBarIcon: ({ color }) => <ProjectsIcon color={String(color)} /> }} />
+      <Tabs.Screen name="claude" options={{ title: 'Claude', tabBarIcon: ({ color }) => <ClaudeIcon color={String(color)} /> }} />
     </Tabs>
   );
 }

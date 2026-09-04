@@ -66,6 +66,7 @@ export default function RootLayout() {
             <Stack.Screen name="settings" options={{ title: '设置', presentation: 'modal' }} />
             <Stack.Screen name="project/[id]" options={{ title: '项目' }} />
             <Stack.Screen name="node/[id]" options={{ title: '' }} />
+            <Stack.Screen name="chat/[id]" options={{ title: 'Claude' }} />
           </Stack>
         )}
         <Toasts />

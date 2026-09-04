@@ -19,7 +19,7 @@ let started = false;
 let pendingRoute: PushData | null = null;
 let router: Router | null = null;
 
-export const CATEGORY: Record<PushKind, string> = { change: 'change', batch: 'batch', due: 'due', nudge: 'nudge', digest: 'digest' };
+export const CATEGORY: Record<PushKind, string> = { change: 'change', batch: 'batch', due: 'due', nudge: 'nudge', digest: 'digest', dependency_slip: 'dependency' };
 
 export const ACTION = {
   approve: 'approve',
@@ -68,6 +68,11 @@ export function routeFor(data: PushData | null | undefined): string | null {
       return data.nodeId ? `/node/${data.nodeId}` : '/';
     case 'digest':
       return '/';
+    case 'dependency_slip': {
+      // open the successor (the task that can no longer start on time)
+      const id = data.nodeId ?? data.toNode;
+      return id ? `/node/${id}` : '/';
+    }
     default:
       return data.nodeId ? `/node/${data.nodeId}` : null;
   }
@@ -129,6 +134,7 @@ async function registerCategories(N: NotificationsModule): Promise<void> {
   await N.setNotificationCategoryAsync(CATEGORY.nudge, [{ identifier: ACTION.nudge, buttonTitle: '催办', options: { opensAppToForeground: true } }]);
   await N.setNotificationCategoryAsync(CATEGORY.batch, []);
   await N.setNotificationCategoryAsync(CATEGORY.digest, []);
+  await N.setNotificationCategoryAsync(CATEGORY.dependency_slip, []);
 }
 
 /**

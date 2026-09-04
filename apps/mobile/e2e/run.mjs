@@ -40,14 +40,45 @@ function serve() {
 const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
 async function mockApi(page, log) {
-  const state = { pending: [...F.todayResponse.pending], batches: [F.draftBatch], ops: [] };
+  const state = { pending: [...F.todayResponse.pending], batches: [F.draftBatch], ops: [], mePatches: [], sessions: [...F.sessions], chatPosts: [], deletedSessions: [] };
   await page.route('**/api/**', async (route) => {
     const req = route.request();
     const u = new URL(req.url());
     const p = u.pathname;
     const m = req.method();
     log.push(`${m} ${p}${u.search}`);
+    if (p === '/api/me' && m === 'PATCH') {
+      const body = req.postDataJSON();
+      state.mePatches.push(body);
+      const account = { ...F.me.account, ...body, settings: { ...F.me.account.settings, ...(body.settings ?? {}) } };
+      return json(route, { account });
+    }
     if (p === '/api/me') return json(route, F.me);
+    // ---- assistant ----
+    if (p === '/api/assistant/status') return json(route, F.assistantStatus);
+    if (p === '/api/assistant/sessions' && m === 'GET') return json(route, state.sessions);
+    if (p === '/api/assistant/sessions' && m === 'POST') {
+      const body = req.postDataJSON() ?? {};
+      const created = { id: `s${state.sessions.length + 1}`, title: null, projectId: body.projectId ?? null, lastText: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      state.sessions.unshift(created);
+      return json(route, { session: created });
+    }
+    if (p.startsWith('/api/assistant/sessions/') && p.endsWith('/messages') && m === 'POST') {
+      state.chatPosts.push({ id: p.split('/')[4], body: req.postDataJSON() });
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: F.sseReply });
+    }
+    if (p.startsWith('/api/assistant/sessions/') && m === 'DELETE') {
+      const id = p.split('/')[4];
+      state.deletedSessions.push(id);
+      state.sessions = state.sessions.filter((x) => x.id !== id);
+      return json(route, { ok: true });
+    }
+    if (p.startsWith('/api/assistant/sessions/') && m === 'GET') {
+      const id = p.split('/')[4];
+      if (id === 's1') return json(route, F.sessionDetail);
+      const session = state.sessions.find((x) => x.id === id);
+      return session ? json(route, { session, messages: [] }) : json(route, { error: 'not_found' }, 404);
+    }
     if (p === '/api/projects' && m === 'GET') return json(route, F.projectRows);
     if (p === `/api/projects/${F.PROJECT_ID}` && m === 'GET') return json(route, F.projectDetail);
     if (p === `/api/projects/${F.PROJECT_ID}/plan-batches`) return json(route, state.batches);
@@ -134,9 +165,15 @@ async function main() {
   check((await page.locator('svg text', { hasText: '接口联调' }).count()) > 0, 'map: node rendered');
 
   // outline toggle
+  check((await page.locator('[data-testid="critical-edge-root-launch"]').count()) > 0, 'map: critical path connector');
+  check(await page.getByTestId('ask-claude').count(), 'project: 问 Claude header entry');
+  check(await page.getByText('延误 1').count(), 'project: slip count in toolbar');
+
   await page.getByTestId('view-outline').click();
   await page.getByTestId('outline-api').waitFor({ timeout: 10_000 });
   await shot('06-project-outline');
+  check(await page.getByTestId('critical-launch').count(), 'outline: critical path marker');
+  check(!(await page.getByTestId('critical-fe').count()), 'outline: no marker off the critical path');
 
   // 5. node detail (from outline)
   await page.getByTestId('outline-api').click();
@@ -145,6 +182,10 @@ async function main() {
   await shot('07-node');
   check(await page.getByText('经 Claude').count(), 'node: claude activity label');
   check(await page.getByText('上次催办').count(), 'node: last nudged');
+  check(await page.getByTestId('dep-waiting').count(), 'node: waiting on dependency line');
+  check(await page.getByText('延误 9 天', { exact: false }).count(), 'node: slip line');
+  check(await page.getByTestId('dep-fe').count(), 'node: predecessor row');
+  check(await page.getByText('前置任务', { exact: true }).count(), 'node: 前置任务 heading');
 
   // change status → op posted
   await page.getByText('等待中', { exact: true }).click();
@@ -157,13 +198,57 @@ async function main() {
   await page.waitForTimeout(500);
   check(log.some((l) => l === 'POST /api/changes/ch1/approve'), 'node: approve called');
 
-  // settings
+  // 问 Claude from the node → prefilled chat scoped to the project
+  await page.getByTestId('ask-claude-node').click();
+  await page.getByTestId('chat-input').waitFor({ timeout: 15_000 });
+  check((await page.getByTestId('chat-input').inputValue()).startsWith('关于「接口联调」'), 'chat: prefill from node');
+  await page.getByTestId('chat-scope').getByText('在项目 官网改版 中').waitFor({ timeout: 10_000 });
+  await page.goBack();
+
+  // Claude tab: session list
   await page.goBack();
   await page.goBack();
   await page.goBack();
-  await page.getByTestId('open-settings').waitFor({ timeout: 15_000 });
-  await page.getByTestId('open-settings').click();
+  await page.getByText('Claude', { exact: true }).last().click();
+  await page.getByTestId('session-s1').waitFor({ timeout: 15_000 });
+  await page.waitForTimeout(2600); // let the approve toast from the node step expire before the screenshot
+  await shot('10-claude-sessions');
+  check(await page.getByText('接口联调怎么办').count(), 'claude: session title');
+  check(await page.getByTestId('session-s2').count(), 'claude: untitled session row');
+
+  // chat: history + streamed reply with a tool chip
+  await page.getByTestId('session-s1').click();
+  await page.getByTestId('msg-m2').waitFor({ timeout: 15_000 });
+  check(await page.getByTestId('tool-get_node').count(), 'chat: stored tool call chip');
+  await page.getByTestId('chat-input').fill('那就推到 10/5 吧');
+  await page.getByTestId('chat-send').click();
+  await page.getByTestId('tool-update_node').waitFor({ timeout: 15_000 });
+  await page.waitForTimeout(400);
+  check(await page.getByText('调用 update_node · 待确认').count(), 'chat: tool chip label');
+  check(await page.getByTestId('msg-m4').count(), 'chat: done event replaced the message id');
+  check(await page.getByText('你确认后生效').count(), 'chat: streamed text rendered');
+  check(state.chatPosts.some((c) => c.id === 's1' && c.body.text === '那就推到 10/5 吧' && c.body.projectId === undefined), 'chat: message posted');
+  await page.getByTestId('tool-update_node').click();
+  await page.getByText('change_id', { exact: false }).waitFor({ timeout: 5_000 });
+  await shot('11-chat');
+
+  // new chat scoped to a project posts projectId
+  await page.goBack();
+  await page.getByTestId('new-chat').waitFor({ timeout: 10_000 });
+
+  // settings: toggles come from the server, a change is PATCHed
+  await page.getByText('设置', { exact: true }).last().click();
   await page.getByText('通知', { exact: true }).waitFor({ timeout: 10_000 });
+  await page.getByTestId('nudge-template').waitFor();
+  check(!(await page.getByTestId('toggle-nudgeDue').locator('input').isChecked().catch(() => true)), 'settings: nudgeDue toggle reflects server (off)');
+  await page.getByTestId('toggle-digest').click();
+  await page.waitForTimeout(500);
+  const patch = state.mePatches.at(-1);
+  check(!!patch && patch.settings?.notifications?.digest === false && patch.settings?.notifications?.nudgeDue === false, `settings: PATCH /api/me with digest off (got ${JSON.stringify(patch)})`);
+  await page.getByTestId('nudge-template').fill('{title} 进度如何？');
+  await page.getByText('通知', { exact: true }).click(); // blur
+  await page.waitForTimeout(500);
+  check(state.mePatches.at(-1)?.settings?.nudgeTemplate === '{title} 进度如何？', 'settings: nudge template PATCHed');
   await shot('09-settings');
 
   await browser.close();

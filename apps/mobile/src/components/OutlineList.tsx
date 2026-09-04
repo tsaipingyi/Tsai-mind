@@ -16,6 +16,7 @@ export function OutlineList({
   derived,
   contacts,
   pendingNodeIds,
+  criticalIds,
   rev,
   onSelect,
   header,
@@ -24,6 +25,8 @@ export function OutlineList({
   derived: Map<string, Derived>;
   contacts: Contact[];
   pendingNodeIds: Set<string>;
+  /** nodes on the critical path get a small orange ◆ after the title */
+  criticalIds?: Set<string>;
   rev: number;
   onSelect: (id: string) => void;
   header?: React.ReactElement;
@@ -72,6 +75,11 @@ export function OutlineList({
               {n.kind === 'milestone' ? '◆ ' : ''}
               {n.title || '（无标题）'}
             </Text>
+            {criticalIds?.has(n.id) ? (
+              <Text style={s.critical} accessibilityLabel="关键路径" testID={`critical-${n.id}`}>
+                ◆
+              </Text>
+            ) : null}
             {pendingNodeIds.has(n.id) && <View style={s.pendingDot} />}
             {n.ownerId ? <Text style={s.owner}>{contactName(contacts, n.ownerId)}</Text> : null}
             {due ? <Text style={[s.date, overdue && { color: C.red }]}>{fmtDate(due)}</Text> : null}
@@ -91,4 +99,5 @@ const s = StyleSheet.create({
   date: { fontFamily: MONO, fontSize: FONT.tiny, color: C.ink2 },
   pct: { fontFamily: MONO, fontSize: FONT.tiny, color: C.ink3, minWidth: 34, textAlign: 'right' },
   pendingDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.orange },
+  critical: { fontSize: 9, color: C.orange, marginLeft: -4 },
 });

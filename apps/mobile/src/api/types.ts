@@ -1,12 +1,32 @@
 // Mirror of apps/web/src/api/types.ts — the REST contract the mobile app talks to.
 import type { Change, Contact, Dependency, Derived, Op, Project, TNode } from '@tsai-mind/core';
 
+export interface NotificationSettings {
+  dueSoon: boolean;
+  overdue: boolean;
+  nudgeDue: boolean;
+  digest: boolean;
+}
+
+/** `account.settings` as served by GET /api/me and written with PATCH /api/me. Unknown keys are kept. */
+export interface AccountSettings {
+  notifications?: Partial<NotificationSettings>;
+  nudgeTemplate?: string;
+  [k: string]: unknown;
+}
+
 export interface Account {
   id: string;
   email: string;
   name: string;
   timezone: string;
-  settings: Record<string, unknown>;
+  settings: AccountSettings;
+}
+
+export interface AccountPatch {
+  name?: string;
+  timezone?: string;
+  settings?: AccountSettings;
 }
 
 export interface MeResponse {
@@ -19,6 +39,15 @@ export interface ProjectRow extends Project {
   pendingCount: number;
 }
 
+/** A predecessor whose due date moved past its successor's start (core `findDependencySlips`, ids only). */
+export interface Slip {
+  fromNode: string;
+  toNode: string;
+  fromDue: string;
+  toStart: string;
+  days: number;
+}
+
 export interface ProjectDetail {
   project: Project;
   nodes: TNode[];
@@ -26,6 +55,9 @@ export interface ProjectDetail {
   pendingChanges: Change[];
   dependencies: Dependency[];
   serverSeq: number;
+  /** Root-first node ids (phase-3 server); computed locally when absent. */
+  criticalPath?: string[];
+  slips?: Slip[];
 }
 
 export interface OpResult {
@@ -131,7 +163,7 @@ export interface DeviceRegistration {
   name?: string;
 }
 
-export type PushKind = 'change' | 'batch' | 'due' | 'nudge' | 'digest';
+export type PushKind = 'change' | 'batch' | 'due' | 'nudge' | 'digest' | 'dependency_slip';
 
 export interface PushData {
   kind: PushKind;
@@ -139,5 +171,51 @@ export interface PushData {
   batchId?: string;
   nodeId?: string;
   projectId?: string;
+  /** dependency_slip: predecessor / successor ids */
+  fromNode?: string;
+  toNode?: string;
   [k: string]: unknown;
 }
+
+// ---- in-app assistant (phase 3) ----
+
+export interface AssistantStatus {
+  configured: boolean;
+  model?: string | null;
+}
+
+export interface AssistantSession {
+  id: string;
+  title: string | null;
+  projectId?: string | null;
+  /** last message text, for the list */
+  lastText?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ToolCall {
+  name: string;
+  input: unknown;
+  resultText: string;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  toolCalls?: ToolCall[];
+  createdAt?: string;
+}
+
+export interface AssistantSessionResponse {
+  session: AssistantSession;
+  messages: AssistantMessage[];
+}
+
+/** Events of POST /api/assistant/sessions/:id/messages (text/event-stream). */
+export type AssistantStreamEvent =
+  | { event: 'text'; delta: string }
+  | { event: 'tool'; name: string; input: unknown; result: unknown }
+  | { event: 'done'; messageId: string; text: string }
+  | { event: 'error'; message: string };

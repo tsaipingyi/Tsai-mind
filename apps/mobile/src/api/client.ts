@@ -1,6 +1,10 @@
 import type { Change, Contact, Op } from '@tsai-mind/core';
 import type {
+  AccountPatch,
   Activity,
+  AssistantSession,
+  AssistantSessionResponse,
+  AssistantStatus,
   DeviceRegistration,
   MeResponse,
   NodeDetailResponse,
@@ -26,6 +30,11 @@ export function configure(opts: { baseUrl?: string; token?: string | null }): vo
 
 export function getBaseUrl(): string {
   return baseUrl;
+}
+
+/** Headers for requests made outside `request` (the SSE stream). */
+export function authHeaders(): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export function normalizeServerUrl(u: string): string {
@@ -98,6 +107,7 @@ export async function request<T>(method: string, path: string, body?: unknown, o
 
 export const api = {
   me: (opts?: { token?: string; baseUrl?: string }) => request<MeResponse>('GET', '/api/me', undefined, opts ?? {}),
+  patchMe: (patch: AccountPatch) => request<MeResponse>('PATCH', '/api/me', patch),
 
   listProjects: () => request<ProjectRow[]>('GET', '/api/projects'),
   getProject: (id: string) => request<ProjectDetail>('GET', `/api/projects/${id}`),
@@ -127,6 +137,15 @@ export const api = {
   listDraftBatches: (projectId: string) => request<PlanBatch[]>('GET', `/api/projects/${projectId}/plan-batches?status=draft`),
   applyBatch: (id: string) => request<unknown>('POST', `/api/plan-batches/${id}/apply`),
   discardBatch: (id: string) => request<unknown>('POST', `/api/plan-batches/${id}/discard`),
+
+  // in-app assistant (phase 3); the message stream itself lives in sse.ts
+  assistantStatus: () => request<AssistantStatus>('GET', '/api/assistant/status'),
+  listSessions: () => request<AssistantSession[] | { sessions: AssistantSession[] }>('GET', '/api/assistant/sessions').then((r) => (Array.isArray(r) ? r : (r.sessions ?? []))),
+  createSession: (body: { projectId?: string; title?: string } = {}) =>
+    request<AssistantSession | { session: AssistantSession }>('POST', '/api/assistant/sessions', body).then((r) => ('session' in r ? r.session : r)),
+  getSession: (id: string) => request<AssistantSessionResponse>('GET', `/api/assistant/sessions/${id}`),
+  deleteSession: (id: string) => request<unknown>('DELETE', `/api/assistant/sessions/${id}`),
+  assistantMessagesUrl: (sessionId: string) => `${baseUrl}/api/assistant/sessions/${sessionId}/messages`,
 };
 
 export function errorMessage(e: unknown): string {

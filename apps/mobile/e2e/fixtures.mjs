@@ -63,11 +63,21 @@ export const pendingChanges = [
 ];
 
 export const me = {
-  account: { id: 'u1', email: 'tsai@example.com', name: '蔡', timezone: 'Asia/Shanghai', settings: {} },
+  account: {
+    id: 'u1',
+    email: 'tsai@example.com',
+    name: '蔡',
+    timezone: 'Asia/Shanghai',
+    settings: { notifications: { dueSoon: true, overdue: true, nudgeDue: false, digest: true }, nudgeTemplate: '' },
+  },
   scopes: ['read', 'write', 'decide'],
 };
 
-export const projectDetail = { project, nodes, contacts, pendingChanges, dependencies: [{ fromNode: 'fe', toNode: 'api' }], serverSeq: 42 };
+// phase-3 server: critical path (root → latest due child … → leaf) and dependency slips (fe due 9/24 > api start 9/15)
+export const criticalPath = ['root', 'launch'];
+export const slips = [{ fromNode: 'fe', toNode: 'api', fromDue: '2026-09-24', toStart: '2026-09-15', days: 9 }];
+
+export const projectDetail = { project, nodes, contacts, pendingChanges, dependencies: [{ fromNode: 'fe', toNode: 'api' }], serverSeq: 42, criticalPath, slips };
 export const projectRows = [{ ...project, overdueCount: 1, pendingCount: 1 }];
 
 const apiEntry = {
@@ -131,3 +141,45 @@ export const draftBatch = {
   },
   status: 'draft',
 };
+
+// ---- in-app assistant ----
+export const assistantStatus = { configured: true, model: 'claude-opus-5' };
+
+export const sessions = [
+  { id: 's1', title: '接口联调怎么办', projectId: PROJECT_ID, lastText: '我已经提议把「接口联调」的截止日推到 10/5，等你确认。', createdAt: '2026-09-02T02:00:00.000Z', updatedAt: '2026-09-03T01:30:00.000Z' },
+  { id: 's2', title: null, projectId: null, lastText: '这周有 1 个逾期任务：接口联调（陈小明）。', createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:10:00.000Z' },
+];
+
+export const sessionDetail = {
+  session: sessions[0],
+  messages: [
+    { id: 'm1', role: 'user', text: '接口联调已经逾期了，怎么办？', toolCalls: [], createdAt: '2026-09-03T01:29:00.000Z' },
+    {
+      id: 'm2',
+      role: 'assistant',
+      text: '「接口联调」原定 8/30，负责人陈小明，前置任务「前端页面」要到 9/24 才完成，所以这个截止日本来就不现实。我建议推到 10/5，并催一下陈小明。',
+      toolCalls: [{ name: 'get_node', input: { node_id: 'api' }, resultText: '{"id":"api","title":"接口联调","status":"blocked","dueDate":"2026-08-30"}' }],
+      createdAt: '2026-09-03T01:30:00.000Z',
+    },
+  ],
+};
+
+/** Streamed reply to the next user message: two text deltas, a tool call that lands in 待确认, a closing delta, done. */
+export const sseReply = [
+  'event: text',
+  'data: {"delta":"好，我把「接口联调」的截止日"}',
+  '',
+  'event: text',
+  'data: {"delta":"改成 10/5。"}',
+  '',
+  'event: tool',
+  'data: {"name":"update_node","input":{"node_id":"api","version":1,"patch":{"dueDate":"2026-10-05"},"reason":"前端页面 9/24 才完成"},"result":{"status":"pending","change_id":"ch2"}}',
+  '',
+  'event: text',
+  'data: {"delta":"这是关键字段，已经进了「待确认」，你确认后生效。"}',
+  '',
+  'event: done',
+  'data: {"messageId":"m4","text":"好，我把「接口联调」的截止日改成 10/5。这是关键字段，已经进了「待确认」，你确认后生效。"}',
+  '',
+  '',
+].join('\n');

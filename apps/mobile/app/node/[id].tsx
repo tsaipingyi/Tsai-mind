@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { NODE_STATUSES } from '@tsai-mind/core';
-import type { NodeStatus } from '@tsai-mind/core';
-import { C, FONT, MONO } from '../../src/theme';
-import { Avatar, Banner, Btn, Empty, Loading, StatusPill } from '../../src/components/ui';
+import { NODE_STATUSES, isWaitingOnDependency } from '@tsai-mind/core';
+import type { Contact, Derived, NodeStatus, TNode } from '@tsai-mind/core';
+import { C, FONT, MONO, STATUS_COLOR } from '../../src/theme';
+import { Avatar, Banner, Btn, Empty, Loading, StatusDot, StatusPill } from '../../src/components/ui';
 import { PendingCard } from '../../src/components/PendingCard';
 import { DateField } from '../../src/components/DateField';
 import { findProjectOfNode, useProjects } from '../../src/state/project';
@@ -91,6 +91,16 @@ export default function NodeScreen() {
   const nodePending = lp.pending.filter((c) => c.nodeId === node.id);
   const nudgedDays = daysAgo(node.lastNudgedAt);
   const path = lp.store.path(node.id);
+
+  // dependencies (project-level edges), waiting state and slips from core
+  const deps = lp.dependencies;
+  const predecessors = deps.filter((x) => x.toNode === node.id).map((x) => lp.store.live(x.fromNode)).filter((n): n is TNode => !!n);
+  const successors = deps.filter((x) => x.fromNode === node.id).map((x) => lp.store.live(x.toNode)).filter((n): n is TNode => !!n);
+  const waiting = (d?.status ?? node.status) !== 'done' && isWaitingOnDependency(node.id, lp.store, lp.derived, deps);
+  const slipIn = lp.slips.filter((x) => x.toNode === node.id);
+  const slipOut = lp.slips.filter((x) => x.fromNode === node.id);
+  const titleOf = (id: string) => lp.store.get(id)?.title ?? '…';
+  const askClaude = () => router.push(`/chat/new?projectId=${encodeURIComponent(projectId)}&prefill=${encodeURIComponent(`关于「${node.title}」：`)}`);
 
   const commitTitle = () => {
     if (title.trim() !== node.title) updateNode(projectId, node.id, { title: title.trim() });
@@ -192,9 +202,48 @@ export default function NodeScreen() {
         />
       </View>
 
-      <View style={[s.pad, { paddingTop: 16, flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
+      {(predecessors.length > 0 || successors.length > 0 || slipIn.length > 0) && (
+        <View style={{ paddingTop: 20 }}>
+          <Text style={[s.h4, s.pad]}>依赖</Text>
+          {waiting && (
+            <Text style={[s.pad, s.waiting]} testID="dep-waiting">
+              等待中：前置任务未完成
+            </Text>
+          )}
+          {slipIn.map((x) => (
+            <Text key={`in-${x.fromNode}`} style={[s.pad, s.slip]} testID={`dep-slip-${x.fromNode}`}>
+              延误 {x.days} 天 · 「{titleOf(x.fromNode)}」截止 {fmtDate(x.fromDue)}，晚于本任务开始 {fmtDate(x.toStart)}
+            </Text>
+          ))}
+          {slipOut.map((x) => (
+            <Text key={`out-${x.toNode}`} style={[s.pad, s.slip]}>
+              拖累「{titleOf(x.toNode)}」延误 {x.days} 天
+            </Text>
+          ))}
+          {predecessors.length > 0 && (
+            <>
+              <Text style={[s.pad, s.depHead]}>前置任务</Text>
+              {predecessors.map((n) => (
+                <DepRow key={n.id} node={n} lp={lp} onPress={() => router.push(`/node/${n.id}`)} />
+              ))}
+            </>
+          )}
+          {successors.length > 0 && (
+            <>
+              <Text style={[s.pad, s.depHead]}>后续任务</Text>
+              {successors.map((n) => (
+                <DepRow key={n.id} node={n} lp={lp} onPress={() => router.push(`/node/${n.id}`)} />
+              ))}
+            </>
+          )}
+        </View>
+      )}
+
+      <View style={[s.pad, { paddingTop: 20, flexDirection: 'row', alignItems: 'center', gap: 12 }]}>
         <Btn title="催办" onPress={() => void doNudge()} disabled={!node.ownerId} testID="nudge-btn" />
         <Text style={s.note}>{!node.ownerId ? '负责人是你自己，不用催' : nudgedDays === null ? '还没催过' : nudgedDays === 0 ? '今天催过' : `上次催办 ${nudgedDays} 天前`}</Text>
+        <View style={{ flex: 1 }} />
+        <Btn title="问 Claude" onPress={askClaude} testID="ask-claude-node" />
       </View>
 
       {nodePending.length > 0 && (
@@ -245,6 +294,24 @@ export default function NodeScreen() {
         </Pressable>
       </Modal>
     </ScrollView>
+  );
+}
+
+function DepRow({ node: n, lp, onPress }: { node: TNode; lp: { derived: Map<string, Derived>; contacts: Contact[] }; onPress: () => void }) {
+  const d = lp.derived.get(n.id);
+  const status = d?.status ?? n.status;
+  const due = d?.dueDate ?? n.dueDate;
+  const overdue = !!due && due < today() && status !== 'done';
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [s.depRow, pressed && { backgroundColor: C.paper2 }]} testID={`dep-${n.id}`}>
+      <StatusDot status={status} />
+      <Text style={[s.depTitle, status === 'done' && { color: C.ink3 }]} numberOfLines={1}>
+        {n.title || '（无标题）'}
+      </Text>
+      {n.ownerId ? <Text style={s.note}>{contactName(lp.contacts, n.ownerId)}</Text> : null}
+      {due ? <Text style={[s.mono, { color: overdue ? C.red : C.ink2, fontSize: FONT.tiny }]}>{fmtDate(due)}</Text> : null}
+      <Text style={s.chev}>›</Text>
+    </Pressable>
   );
 }
 
@@ -320,6 +387,11 @@ const s = StyleSheet.create({
   actTime: { fontFamily: MONO, fontSize: FONT.tiny, color: C.ink3, minWidth: 64 },
   actText: { flex: 1, fontSize: FONT.small, color: C.ink },
   via: { fontSize: FONT.tiny, color: C.orangeDeep },
+  waiting: { fontSize: FONT.small, color: STATUS_COLOR.waiting, marginTop: 2, marginBottom: 4 },
+  slip: { fontSize: FONT.small, color: C.red, marginTop: 2, marginBottom: 4, lineHeight: 19 },
+  depHead: { fontSize: FONT.tiny, color: C.ink3, marginTop: 8, marginBottom: 2 },
+  depRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderColor: C.line },
+  depTitle: { flex: 1, fontSize: FONT.body, color: C.ink },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: C.paper, borderTopLeftRadius: 14, borderTopRightRadius: 14, paddingBottom: 32, paddingTop: 8 },
   sheetTitle: { fontSize: FONT.small, color: C.ink2, paddingHorizontal: 16, paddingVertical: 10 },

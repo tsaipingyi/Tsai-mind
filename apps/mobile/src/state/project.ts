@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { TreeStore, computeRollup, addDays } from '@tsai-mind/core';
+import { TreeStore, computeRollup, addDays, computeCriticalPath, findDependencySlips } from '@tsai-mind/core';
 import type { Change, Contact, Dependency, Derived, NodePatch, Op, Project, TNode } from '@tsai-mind/core';
 import { api, errorMessage, isNetworkError } from '../api/client';
-import type { PlanBatch } from '../api/types';
+import type { PlanBatch, Slip } from '../api/types';
 import { onRealtime, onRealtimeOpen } from '../sync/realtime';
 import { noteOnline, queue, rememberNodes, setQueueHandlers, snapshots } from '../sync/runtime';
 import { clientIdSync } from '../lib/storage';
@@ -20,6 +20,10 @@ export interface LoadedProject {
   pending: Change[];
   batches: PlanBatch[];
   dependencies: Dependency[];
+  /** Derived (core `computeCriticalPath`), root-first; recomputed on every tree change. */
+  criticalPath: string[];
+  /** Derived (core `findDependencySlips`), ids only. */
+  slips: Slip[];
   serverSeq: number;
   loading: boolean;
   error: string | null;
@@ -60,11 +64,21 @@ function blank(id: string): LoadedProject {
     pending: [],
     batches: [],
     dependencies: [],
+    criticalPath: [],
+    slips: [],
     serverSeq: 0,
     loading: true,
     error: null,
     offline: false,
     loadedAt: 0,
+  };
+}
+
+/** Schedule facts the screens show; the same core functions the server uses. */
+export function computeSchedule(store: TreeStore, derived: Map<string, Derived>, deps: Dependency[]): { criticalPath: string[]; slips: Slip[] } {
+  return {
+    criticalPath: computeCriticalPath(store, derived),
+    slips: findDependencySlips(store, derived, deps).map((s) => ({ fromNode: s.from.id, toNode: s.to.id, fromDue: s.fromDue, toStart: s.toStart, days: s.days })),
   };
 }
 
@@ -82,9 +96,13 @@ export const useProjects = create<ProjectsState>((set, get) => {
     const cur = get().projects[id] ?? blank(id);
     const store = partial.store ?? cur.store;
     const next: LoadedProject = { ...cur, ...partial, store };
-    if (bumpTree || partial.store) {
+    if (bumpTree || partial.store || partial.dependencies) {
       next.rev = cur.rev + 1;
       next.derived = computeRollup(store);
+      Object.assign(next, computeSchedule(store, next.derived, next.dependencies));
+      // a phase-3 server sends its own view of the schedule; prefer it when the tree came straight from it
+      if (partial.criticalPath) next.criticalPath = partial.criticalPath;
+      if (partial.slips) next.slips = partial.slips;
     }
     set({ projects: { ...get().projects, [id]: next } });
     return next;
@@ -98,6 +116,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
       nodes: [...lp.store.nodes.values()],
       contacts: lp.contacts,
       pending: lp.pending,
+      dependencies: lp.dependencies,
       serverSeq: lp.serverSeq,
       appliedOpIds: queue.pending(id).map((o) => o.opId),
     });
@@ -194,7 +213,9 @@ export const useProjects = create<ProjectsState>((set, get) => {
         store,
         contacts: d.contacts,
         pending: d.pendingChanges.filter((c) => c.status === 'pending'),
-        dependencies: d.dependencies,
+        dependencies: d.dependencies ?? [],
+        ...(d.criticalPath ? { criticalPath: d.criticalPath } : {}),
+        ...(d.slips ? { slips: d.slips } : {}),
         serverSeq: d.serverSeq,
         loading: false,
         error: null,
@@ -223,6 +244,7 @@ export const useProjects = create<ProjectsState>((set, get) => {
             store,
             contacts: snap.contacts,
             pending: snap.pending,
+            dependencies: snap.dependencies ?? [],
             serverSeq: snap.serverSeq,
             loading: false,
             error: null,

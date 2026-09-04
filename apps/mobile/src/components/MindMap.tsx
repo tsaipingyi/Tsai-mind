@@ -17,6 +17,7 @@ export function MindMap({
   derived,
   contacts,
   pendingNodeIds,
+  criticalIds,
   rev,
   onSelect,
   selectedId,
@@ -25,6 +26,8 @@ export function MindMap({
   derived: Map<string, Derived>;
   contacts: Contact[];
   pendingNodeIds: Set<string>;
+  /** nodes on the critical path: their connectors are drawn thicker in solid orange */
+  criticalIds?: Set<string>;
   rev: number;
   onSelect: (id: string) => void;
   selectedId?: string | null;
@@ -63,9 +66,19 @@ export function MindMap({
             <Svg width={W} height={H} viewBox={`0 0 ${layout.width} ${layout.height}`}>
               {layout.order.map((id) => {
                 const ln = layout.nodes.get(id)!;
-                return ln.childIds.map((cid) => (
-                  <Path key={`${id}-${cid}`} d={connectorPath(ln, layout.nodes.get(cid)!)} stroke={C.orangeLine} strokeWidth={1.5} fill="none" />
-                ));
+                return ln.childIds.map((cid) => {
+                  const critical = !!criticalIds && criticalIds.has(id) && criticalIds.has(cid);
+                  return (
+                    <Path
+                      key={`${id}-${cid}`}
+                      d={connectorPath(ln, layout.nodes.get(cid)!)}
+                      stroke={critical ? C.orange : C.orangeLine}
+                      strokeWidth={critical ? 2.5 : 1.5}
+                      fill="none"
+                      testID={critical ? `critical-edge-${id}-${cid}` : undefined}
+                    />
+                  );
+                });
               })}
               {layout.order.map((id) => {
                 const ln = layout.nodes.get(id)!;

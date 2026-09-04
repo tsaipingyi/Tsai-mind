@@ -2,7 +2,7 @@
  * Last-seen project trees, so the app opens offline. Plain data only; the
  * project store rebuilds a core TreeStore from it and replays unsent ops.
  */
-import type { Change, Contact, Project, TNode } from '@tsai-mind/core';
+import type { Change, Contact, Dependency, Project, TNode } from '@tsai-mind/core';
 import type { QueueStorage } from './queue';
 
 export interface ProjectSnapshot {
@@ -10,6 +10,7 @@ export interface ProjectSnapshot {
   nodes: TNode[];
   contacts: Contact[];
   pending: Change[];
+  dependencies?: Dependency[];
   serverSeq: number;
   /** opIds already applied inside `nodes` (optimistic local edits). */
   appliedOpIds: string[];
