@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { RealtimeMessage } from './types';
+import { isDemo } from '../demo/flag';
 
 interface RealtimeState {
   connected: boolean;
@@ -82,6 +83,13 @@ function scheduleReconnect(): void {
 }
 
 export function startRealtime(token: string): void {
+  if (isDemo) {
+    // no server to talk to: the mock applies ops synchronously and the app already applies them optimistically
+    currentToken = token;
+    stopped = false;
+    useRealtime.setState({ connected: true, attempted: true });
+    return;
+  }
   if (currentToken === token && !stopped) return;
   stopRealtime();
   currentToken = token;

@@ -14,6 +14,7 @@ import { Avatar } from '../components/ui';
 import { api, errorMessage } from '../api/client';
 import { toast } from '../state/toast';
 import { copyText } from '../lib/util';
+import { isDemo } from '../demo/flag';
 
 export function ProjectEditorPage() {
   const { id } = useParams();
@@ -115,7 +116,9 @@ export function ProjectEditorPage() {
 
   const openPrint = useCallback(() => {
     if (!projectId) return;
-    window.open(`/projects/${projectId}/print?print=1`, '_blank', 'noopener');
+    // under the demo's HashRouter the route lives in the hash (the new window starts from the seed again)
+    const url = isDemo ? `${location.pathname}${location.search}#/projects/${projectId}/print?print=1` : `/projects/${projectId}/print?print=1`;
+    window.open(url, '_blank', 'noopener');
   }, [projectId]);
 
   const shortcutHandlers = useMemo(

@@ -12,11 +12,16 @@ import { PrintPage } from './pages/Print';
 import { useSession } from './state/session';
 import { onUnauthorized } from './api/client';
 import { startRealtime, stopRealtime } from './api/realtime';
+import { DEMO_BANNER, DEMO_TOKEN, isDemo } from './demo/flag';
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const token = useSession((s) => s.token);
   const loc = useLocation();
-  if (!token) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  if (!token) {
+    // demo mode logs itself back in (App effect); never show the token form there
+    if (isDemo) return <div className="page faint">演示模式登录中…</div>;
+    return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  }
   return children;
 }
 
@@ -24,6 +29,7 @@ export function App() {
   const token = useSession((s) => s.token);
   const bootstrap = useSession((s) => s.bootstrap);
   const logout = useSession((s) => s.logout);
+  const login = useSession((s) => s.login);
   const nav = useNavigate();
 
   useEffect(() => {
@@ -40,10 +46,15 @@ export function App() {
     else stopRealtime();
   }, [token]);
 
-  return (
+  // demo mode: no login page — (re)login with the fixed demo token whenever there is none (e.g. after 退出)
+  useEffect(() => {
+    if (isDemo && !token) void login(DEMO_TOKEN).catch(() => undefined);
+  }, [token, login]);
+
+  const body = (
     <>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={isDemo ? <Navigate to="/" replace /> : <LoginPage />} />
         <Route
           path="/projects/:id/print"
           element={
@@ -70,5 +81,14 @@ export function App() {
       </Routes>
       <Toasts />
     </>
+  );
+  if (!isDemo) return body;
+  return (
+    <div className="demo-shell">
+      <div className="demo-banner" role="status" data-testid="demo-banner">
+        {DEMO_BANNER}
+      </div>
+      <div className="demo-main">{body}</div>
+    </div>
   );
 }

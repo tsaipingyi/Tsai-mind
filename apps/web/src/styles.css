@@ -302,6 +302,28 @@ label.field > span,
   height: 100%;
   overflow: hidden;
 }
+
+/* demo mode: thin orange banner above the whole app */
+.demo-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.demo-banner {
+  flex: none;
+  background: var(--orange);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 12px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.demo-main {
+  flex: 1;
+  min-height: 0;
+  height: 0;
+}
 .rail {
   width: var(--rail-w);
   flex: none;
