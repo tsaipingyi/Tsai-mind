@@ -18,9 +18,10 @@ import type { ChatDoc, DemoServer, DirtyKind, ProjectDoc } from '../demo/mockApi
 import { useProject } from '../state/project';
 import { toast } from '../state/toast';
 import { useCapability } from './capabilities';
+import { createLocalDb, localStorageAvailable } from './localDb';
 import { CLOUD_DOCS } from './mode';
 import { STARTER_OUTLINE, STARTER_PROJECT_NAME } from './seed';
-import { OFFLINE_MESSAGE, setCloudStatus, useCloudStatus } from './status';
+import { LOCAL_MESSAGE, OFFLINE_MESSAGE, setCloudStatus, useCloudStatus } from './status';
 import type { DB, DbError, DocumentSnapshot, QuerySnapshot } from './types';
 
 const DEBOUNCE_MS = 400;
@@ -67,6 +68,8 @@ function chineseError(code: string, e: unknown): string {
 export class CloudPersister {
   db: DB | null = null;
   private booted = false;
+  /** data lives in this browser only (no artifact db) */
+  private local = false;
   private timers = new Map<DocKey, ReturnType<typeof setTimeout>>();
   private inflight = new Set<DocKey>();
   /** serialized body (without updatedAt) we last wrote or imported, to skip no-op writes */
@@ -83,7 +86,12 @@ export class CloudPersister {
 
   async boot(): Promise<void> {
     this.server.onDirty = (kind, id) => this.markDirty(kind, id);
-    const db = await useCapability('db');
+    let db = await useCapability('db');
+    if (!db && localStorageAvailable()) {
+      // outside the claude.ai viewer (a static host, a saved file): keep the data in this browser
+      db = createLocalDb();
+      this.local = true;
+    }
     if (!db) {
       await this.seedStarter();
       setCloudStatus({ state: 'offline', message: OFFLINE_MESSAGE, firstRun: true });
@@ -107,7 +115,7 @@ export class CloudPersister {
     this.subscribe();
     this.installFlushHooks();
     this.booted = true;
-    if (!this.hasError) setCloudStatus({ state: 'ready', message: undefined });
+    if (!this.hasError) setCloudStatus({ state: this.local ? 'local' : 'ready', message: this.local ? LOCAL_MESSAGE : undefined });
   }
 
   private async failBoot(e: unknown): Promise<void> {
@@ -381,7 +389,7 @@ export class CloudPersister {
     if (this.hasError) return; // sticky until the next successful write
     const busy = this.timers.size > 0 || this.inflight.size > 0;
     const cur = useCloudStatus.getState().state;
-    const next = busy ? 'saving' : 'ready';
+    const next = busy ? 'saving' : this.local ? 'local' : 'ready';
     if (cur !== next) setCloudStatus({ state: next });
   }
 

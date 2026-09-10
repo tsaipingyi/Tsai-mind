@@ -376,17 +376,17 @@ try {
   await page.close();
   await context.close();
 
-  // ---- offline: use('db') resolves null → in-memory only, app still works ----
+  // ---- no artifact db (a static host like Vercel): data is kept in this browser's localStorage ----
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.addInitScript(fakeClaude, { db: false });
   page = await context.newPage();
   attach(page);
   await page.goto(URL_);
-  await waitState(page, 'offline');
+  await waitState(page, 'local');
   const off = await page.evaluate(() => window.tsaimindCloud.status());
-  assert(off.message && off.message.includes('刷新就没了'), `offline message: ${off.message}`);
+  assert(off.message && off.message.includes('这个浏览器'), `local message: ${off.message}`);
   const pillText = (await page.locator('[data-testid="cloud-status"]').first().innerText()).trim();
-  assert(/离线/.test(pillText), `status pill says offline: ${pillText}`);
+  assert(/本机/.test(pillText), `status pill says local: ${pillText}`);
   await page.getByRole('link', { name: '项目' }).click();
   await page.getByText('我的第一个项目').first().click();
   await page.locator('.mm-node').first().waitFor();
@@ -395,13 +395,26 @@ try {
   await page.locator('.mm-node').nth(1).click();
   await page.keyboard.press('Tab');
   await page.waitForTimeout(150);
-  assert((await page.locator('.mm-node').count()) === offBefore + 1, 'offline: editing still works in memory');
-  await page.keyboard.press('Escape');
+  assert((await page.locator('.mm-node').count()) === offBefore + 1, 'local: editing works');
+  await page.waitForTimeout(250);
+  await page.keyboard.type('本机节点');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  assert((await page.locator('.mm-node').count()) === offBefore + 1, 'local: titled node committed with Enter');
+  await page.waitForTimeout(800);
+  await page.reload();
+  await waitState(page, 'local');
+  await page.getByRole('link', { name: '项目' }).click();
+  await page.getByText('我的第一个项目').first().click();
+  await page.locator('.mm-node').first().waitFor();
+  await page.waitForTimeout(300);
+  assert((await page.locator('.mm-node').count()) === offBefore + 1, 'local: the new node survived a reload (localStorage)');
+  assert(await page.evaluate(() => !!localStorage.getItem('tsaimind.localdb')), 'local: localStorage holds the data');
   await page.getByTestId('chat-toggle').click();
   await page.getByTestId('chat-panel').getByLabel('消息').fill('你好');
   await page.getByTestId('chat-panel').getByLabel('消息').press('Enter');
   await page.getByTestId('chat-panel').getByTestId('tool-chip').waitFor({ timeout: 15000 });
-  assert(true, 'offline: Claude (sample) still answers');
+  assert(true, 'local: Claude (sample) still answers');
   await page.screenshot({ path: 'e2e/out/cloud-offline.png' });
 
   assert(consoleErrors.length === 0, `zero console errors (${consoleErrors.length ? consoleErrors.join(' | ') : 'clean'})`);

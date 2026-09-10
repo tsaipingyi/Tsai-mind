@@ -7,7 +7,7 @@
  * `src/cloud/mode.ts` exports `isCloud` (the VITE_CLOUD build flag). Only these two light modules are
  * globbed — `src/cloud/index.ts` pulls in the whole persistence layer and is loaded lazily by demo/install.
  */
-export type CloudState = 'loading' | 'ready' | 'saving' | 'offline' | 'error';
+export type CloudState = 'loading' | 'ready' | 'saving' | 'local' | 'offline' | 'error';
 
 export interface CloudStatus {
   state: CloudState;
@@ -24,7 +24,7 @@ const realHook: (() => unknown) | null = Object.values(statusModules).find((m) =
 /** true only in a cloud build (`VITE_CLOUD=true`); false when the module is missing. */
 export const isCloudBuild: boolean = Object.values(modeModules).some((m) => m?.isCloud === true);
 
-const STATES: CloudState[] = ['loading', 'ready', 'saving', 'offline', 'error'];
+const STATES: CloudState[] = ['loading', 'ready', 'saving', 'local', 'offline', 'error'];
 
 function normalize(v: unknown): CloudStatus | null {
   if (!v || typeof v !== 'object') return null;
@@ -50,6 +50,8 @@ export function cloudStatusLabel(s: CloudStatus): string {
       return '保存中…';
     case 'ready':
       return '已保存';
+    case 'local':
+      return '本机保存（仅此浏览器）';
     case 'offline':
       return '离线（本页数据不会保存）';
     case 'error':
