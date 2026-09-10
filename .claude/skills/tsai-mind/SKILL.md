@@ -29,7 +29,7 @@ Use the `Artifact` tool with `read_db` / `write_db` on that `url`. The page subs
 3. Edit: write the changed outline to a file (keep `[id]` on existing lines; new lines have no id; `@名字` must match a contact; `replace` mode deletes unmentioned nodes, so prefer `sync`), then
    `node scripts/cloud-apply.mjs <doc.json> <outline.md> sync <contacts.json> > updated.json`. The script applies the diff through core (rollup rules, cycles, version bumps) and appends op log and activity.
 4. Write back: `write_db` with `db_op: "set"`, `collection: "projects"`, `doc_id: <projectId>`, `file_path: updated.json`.
-5. New project: `node scripts/cloud-project.mjs "名字" outline.md contacts.json > new.json`; the JSON has `{id, doc}` — write `doc` (save it to its own file first) with `write_db set projects/<id>`.
+5. New project: `node scripts/cloud-project.mjs "名字" outline.md contacts.json [--no-history] > new.json` (use `--no-history` when the outline has more than ~60 lines; documents must stay under 240 KiB); the JSON has `{id, doc}` — write `doc` (save it to its own file first) with `write_db set projects/<id>`.
 6. Tell the user what changed in plain words (titles, not ids). Writes from here apply directly; there is no 待确认 step, so confirm destructive changes (deleting nodes, `replace` mode) with the user before writing.
 
 Build core first if `packages/core/dist` is missing: `pnpm --filter @tsai-mind/core build`.
