@@ -33,3 +33,7 @@ Use the `Artifact` tool with `read_db` / `write_db` on that `url`. The page subs
 6. Tell the user what changed in plain words (titles, not ids). Writes from here apply directly; there is no 待确认 step, so confirm destructive changes (deleting nodes, `replace` mode) with the user before writing.
 
 Build core first if `packages/core/dist` is missing: `pnpm --filter @tsai-mind/core build`.
+
+## Daily reminder (Gmail)
+
+`node scripts/cloud-today.mjs <dir>` (the folder written by `read_db … out_dir`, containing `projects/*.json` and `meta/account.json` + `meta/contacts.json`) prints `{shouldSend, subject, text, html, counts}` for today in the account's timezone. A scheduled Routine runs it every morning and, when `shouldSend` is true, sends `subject`/`text`/`html` to the owner with the Gmail connector (`send_message`, to `tsaipingyi@gmail.com`). It lists 逾期 / 今天到期 / 明天到期 / 三天内到期 / 待确认 and never sends an empty mail.
