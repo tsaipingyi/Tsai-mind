@@ -61,6 +61,7 @@ create table node (
   priority        smallint not null default 3 check (priority between 1 and 4),
   tags            text[] not null default '{}',
   last_nudged_at  timestamptz,
+  side            text check (side in ('left', 'right')), -- mind-map side of a top-level branch; null = automatic
   version         int not null default 1,
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),

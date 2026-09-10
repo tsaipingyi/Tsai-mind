@@ -27,6 +27,7 @@ export function rowToNode(r: Row): TNode {
     priority: Number(r.priority) as TNode['priority'],
     tags: (r.tags as string[]) ?? [],
     lastNudgedAt: iso(r.last_nudged_at),
+    side: (r.side as TNode['side']) ?? null,
     version: Number(r.version),
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
@@ -54,6 +55,7 @@ export function nodeToRow(n: TNode): Row {
     priority: n.priority,
     tags: n.tags,
     last_nudged_at: n.lastNudgedAt,
+    side: n.side ?? null,
     version: n.version,
     created_at: n.createdAt,
     updated_at: n.updatedAt,
@@ -63,7 +65,7 @@ export function nodeToRow(n: TNode): Row {
 
 export const NODE_COLUMNS = [
   'id', 'project_id', 'parent_id', 'rank', 'title', 'description', 'kind', 'owner_id', 'status', 'progress',
-  'progress_mode', 'start_date', 'due_date', 'date_mode', 'estimate_hours', 'priority', 'tags', 'last_nudged_at',
+  'progress_mode', 'start_date', 'due_date', 'date_mode', 'estimate_hours', 'priority', 'tags', 'last_nudged_at', 'side',
   'version', 'created_at', 'updated_at', 'deleted_at',
 ] as const;
 

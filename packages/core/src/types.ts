@@ -1,6 +1,8 @@
 export type NodeKind = 'goal' | 'task' | 'milestone' | 'note';
 export type NodeStatus = 'todo' | 'in_progress' | 'blocked' | 'waiting' | 'done';
 export type RollupMode = 'auto' | 'manual';
+/** Which side of the root a top-level branch is drawn on in the mind map; null = decided automatically. */
+export type NodeSide = 'left' | 'right';
 export type Actor = 'user' | 'claude' | 'system';
 
 /** ISO date string, YYYY-MM-DD. */
@@ -28,6 +30,8 @@ export interface TNode {
   priority: 1 | 2 | 3 | 4;
   tags: string[];
   lastNudgedAt: ISOTime | null;
+  /** mind-map side for a direct child of the root (ignored elsewhere); null/absent = automatic */
+  side?: NodeSide | null;
   version: number;
   createdAt: ISOTime;
   updatedAt: ISOTime;
@@ -97,6 +101,7 @@ export type NodePatch = Partial<
     | 'priority'
     | 'tags'
     | 'lastNudgedAt'
+    | 'side'
   >
 >;
 
@@ -115,6 +120,7 @@ export const PATCHABLE_FIELDS: readonly (keyof NodePatch)[] = [
   'priority',
   'tags',
   'lastNudgedAt',
+  'side',
 ];
 
 /** Input for creating a node. Missing fields get defaults. */
@@ -136,6 +142,7 @@ export interface NewNodeInput {
   estimateHours?: number | null;
   priority?: 1 | 2 | 3 | 4;
   tags?: string[];
+  side?: NodeSide | null;
 }
 
 interface OpBase {

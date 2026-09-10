@@ -36,30 +36,43 @@ export interface MapLayout {
 
 /**
  * Balanced map (XMind style): the root sits in the middle and its branches are split between the
- * right and the left side. Branches keep their order — the first ones go right, the rest left — and
- * the split point is chosen so both sides carry about the same number of nodes. The split ignores
- * collapsing so a branch never jumps sides when it is folded.
+ * right and the left side. A branch with an explicit `side` stays there; the others keep their
+ * order — the first ones go right, the rest left — with the split point chosen so both sides carry
+ * about the same number of nodes. The split ignores collapsing so a branch never jumps sides when
+ * it is folded.
  */
 export function rootSides(store: TreeStore): Map<string, Side> {
   const sides = new Map<string, Side>();
   const root = store.root();
   if (!root) return sides;
   const branches = store.children(root.id);
-  const weights = branches.map((b) => 1 + store.descendants(b.id).length);
-  const total = weights.reduce((a, b) => a + b, 0);
-  let best = branches.length;
+  let fixedRight = 0;
+  let fixedLeft = 0;
+  const auto: { id: string; w: number }[] = [];
+  for (const b of branches) {
+    const w = 1 + store.descendants(b.id).length;
+    if (b.side === 'left') {
+      sides.set(b.id, 'left');
+      fixedLeft += w;
+    } else if (b.side === 'right') {
+      sides.set(b.id, 'right');
+      fixedRight += w;
+    } else auto.push({ id: b.id, w });
+  }
+  const total = auto.reduce((a, b) => a + b.w, 0);
+  let best = auto.length;
   let bestDiff = Infinity;
   let acc = 0;
-  for (let k = 0; k <= branches.length; k++) {
-    if (k > 0) acc += weights[k - 1]!;
-    const diff = Math.abs(acc - (total - acc));
+  for (let k = 0; k <= auto.length; k++) {
+    if (k > 0) acc += auto[k - 1]!.w;
+    const diff = Math.abs(fixedRight + acc - (fixedLeft + total - acc));
     // ties go to the right side (a single branch stays on the right)
     if (diff <= bestDiff) {
       bestDiff = diff;
       best = k;
     }
   }
-  branches.forEach((b, i) => sides.set(b.id, i < best ? 'right' : 'left'));
+  auto.forEach((b, i) => sides.set(b.id, i < best ? 'right' : 'left'));
   return sides;
 }
 

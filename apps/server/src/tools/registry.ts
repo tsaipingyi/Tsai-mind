@@ -95,6 +95,7 @@ const patchSchema = z
     estimate_hours: z.number().nonnegative().nullable(),
     priority: z.number().int().min(1).max(4),
     tags: z.array(z.string()),
+    side: z.enum(['left', 'right']).nullable().describe('mind-map side of a top-level branch; null = automatic'),
   })
   .partial();
 

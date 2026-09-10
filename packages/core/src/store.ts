@@ -28,6 +28,7 @@ export function nodeDefaults(input: NewNodeInput, now: string): TNode {
     priority: input.priority ?? 3,
     tags: input.tags ?? [],
     lastNudgedAt: null,
+    side: input.side ?? null,
     version: 1,
     createdAt: now,
     updatedAt: now,
@@ -43,6 +44,7 @@ export function validatePatch(patch: NodePatch): string | null {
     return 'progress must be 0..100';
   if (patch.priority !== undefined && ![1, 2, 3, 4].includes(patch.priority)) return 'priority must be 1..4';
   if (patch.title !== undefined && typeof patch.title !== 'string') return 'title must be a string';
+  if (patch.side !== undefined && patch.side !== null && patch.side !== 'left' && patch.side !== 'right') return "side must be 'left', 'right' or null";
   return null;
 }
 

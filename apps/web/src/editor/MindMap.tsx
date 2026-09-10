@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isOverdue } from '@tsai-mind/core';
 import { nodeMatches, useProject } from '../state/project';
-import { computeLayout, connectorPath, type LayoutNode } from './layout';
+import { computeLayout, connectorPath, H_GAP, NODE_W, V_GAP, type LayoutNode, type Side } from './layout';
 import { Avatar, ProgressRing } from '../components/ui';
 import { fmtRange, today } from '../lib/util';
 import { TitleInput } from './TitleInput';
@@ -253,8 +253,10 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
     window.addEventListener('mouseup', up);
   };
 
-  // ---- node drag (re-parent) ----
-  const [drag, setDrag] = useState<{ id: string; x: number; y: number; target: string | null } | null>(null);
+  // ---- node drag: onto a node = become its child; its top / bottom edge = before / after it;
+  //      a top-level branch dropped on the blank left / right of the root = change side ----
+  type DropTarget = { kind: 'into'; id: string; side?: Side } | { kind: 'before' | 'after'; id: string } | { kind: 'side'; side: Side };
+  const [drag, setDrag] = useState<{ id: string; target: DropTarget | null } | null>(null);
   const onNodeMouseDown = (e: React.MouseEvent, ln: LayoutNode) => {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -263,33 +265,96 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
     if (ln.parentId === null || readOnly) return;
     const start = { x: e.clientX, y: e.clientY };
     let dragging = false;
+    const rootId = store.root()?.id ?? null;
     const descendants = new Set(store.descendants(ln.id).map((n) => n.id));
+    const hitTest = (ev: MouseEvent): DropTarget | null => {
+      const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.mm-node') as HTMLElement | null;
+      const tid = under?.dataset.nodeId ?? null;
+      if (tid && tid !== ln.id && !descendants.has(tid)) {
+        const rect = under!.getBoundingClientRect();
+        if (tid === rootId) return { kind: 'into', id: tid, side: ev.clientX < rect.left + rect.width / 2 ? 'left' : 'right' };
+        const f = (ev.clientY - rect.top) / rect.height;
+        if (f < 0.25) return { kind: 'before', id: tid };
+        if (f > 0.75) return { kind: 'after', id: tid };
+        return { kind: 'into', id: tid };
+      }
+      if (tid || ln.parentId !== rootId) return null;
+      const rootEl = containerRef.current?.querySelector('.mm-node.root');
+      if (!rootEl) return null;
+      const rr = rootEl.getBoundingClientRect();
+      const side: Side = ev.clientX < rr.left + rr.width / 2 ? 'left' : 'right';
+      return side === ln.side ? null : { kind: 'side', side };
+    };
     const move = (ev: MouseEvent) => {
       const dx = ev.clientX - start.x;
       const dy = ev.clientY - start.y;
       if (!dragging && Math.abs(dx) + Math.abs(dy) > 4) dragging = true;
       if (!dragging) return;
-      const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.mm-node') as HTMLElement | null;
-      const tid = under?.dataset.nodeId ?? null;
-      const target = tid && tid !== ln.id && !descendants.has(tid) ? tid : null;
-      setDrag({ id: ln.id, x: ev.clientX, y: ev.clientY, target });
+      setDrag({ id: ln.id, target: hitTest(ev) });
     };
     const up = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
       if (!dragging) return;
-      const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.mm-node') as HTMLElement | null;
-      const tid = under?.dataset.nodeId ?? null;
+      const target = hitTest(ev);
       setDrag(null);
-      if (tid && tid !== ln.id && !descendants.has(tid)) {
-        const kids = store.children(tid).filter((k) => k.id !== ln.id);
-        moveNode(ln.id, tid, kids.length ? kids[kids.length - 1]!.id : null);
-        if (collapsed.has(tid)) toggleCollapse(tid);
+      if (!target || !rootId) return;
+      const sideOf = (id: string): Side => layout.nodes.get(id)?.side ?? 'right';
+      // pinning one branch must not make the automatic balance move another: freeze the others where they are
+      const pinOthers = () => {
+        for (const k of store.children(rootId)) if (k.id !== ln.id && !k.side) updateNode(k.id, { side: sideOf(k.id) });
+      };
+      if (target.kind === 'side') {
+        pinOthers();
+        updateNode(ln.id, { side: target.side });
+        return;
       }
+      if (target.kind === 'into') {
+        const kids = store.children(target.id).filter((k) => k.id !== ln.id);
+        if (target.id === rootId) {
+          // last branch on that side (in rank order), else the end of the list
+          const onSide = kids.filter((k) => sideOf(k.id) === target.side);
+          const after = onSide.length ? onSide[onSide.length - 1]! : kids[kids.length - 1];
+          pinOthers();
+          moveNode(ln.id, rootId, after?.id ?? null);
+          updateNode(ln.id, { side: target.side ?? null });
+        } else {
+          moveNode(ln.id, target.id, kids.length ? kids[kids.length - 1]!.id : null);
+          if (ln.node.side) updateNode(ln.id, { side: null });
+        }
+        if (collapsed.has(target.id)) toggleCollapse(target.id);
+        return;
+      }
+      const t = store.live(target.id);
+      if (!t || t.parentId === null) return;
+      const sibs = store.children(t.parentId).filter((s) => s.id !== ln.id);
+      const i = sibs.findIndex((s) => s.id === target.id);
+      const afterId = target.kind === 'after' ? target.id : i > 0 ? sibs[i - 1]!.id : null;
+      moveNode(ln.id, t.parentId, afterId);
+      if (t.parentId === rootId) {
+        const s = sideOf(target.id);
+        if (ln.node.side !== s) {
+          pinOthers();
+          updateNode(ln.id, { side: s });
+        }
+      } else if (ln.node.side) updateNode(ln.id, { side: null });
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
   };
+
+  // dashed slot showing where a branch lands when it is dropped on the other side of the root
+  const dropSlot = useMemo(() => {
+    if (!drag?.target || drag.target.kind !== 'side') return null;
+    const side = drag.target.side;
+    const r = layout.order.length ? layout.nodes.get(layout.order[0]!) : undefined;
+    if (!r) return null;
+    const stack = r.childIds.map((id) => layout.nodes.get(id)!).filter((c) => c.side === side && c.id !== drag.id);
+    const last = stack[stack.length - 1];
+    const x = side === 'right' ? r.x + r.w + H_GAP : r.x - H_GAP - NODE_W;
+    const y = last ? last.y + last.subtreeH - (last.subtreeH - last.h) / 2 + V_GAP : r.y;
+    return { x, y, side };
+  }, [drag, layout]);
 
   const root = store.root();
   const filtering = ownerFilter !== undefined || search.trim() !== '';
@@ -330,7 +395,8 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
             status === 'done' ? 'done' : '',
             n.kind === 'milestone' ? 'milestone' : '',
             filtering && !nodeMatches(n, ownerFilter, search) ? 'dimmed' : '',
-            drag?.target === id ? 'drop-target' : '',
+            drag?.target && 'id' in drag.target && drag.target.id === id ? (drag.target.kind === 'into' ? 'drop-target' : `drop-${drag.target.kind}`) : '',
+            drag?.target?.kind === 'side' && ln.depth === 0 ? 'drop-target' : '',
             drag?.id === id ? 'dragging' : '',
           ]
             .filter(Boolean)
@@ -398,9 +464,10 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
             </div>
           );
         })}
+        {dropSlot && <div className={`mm-drop-slot ${dropSlot.side}`} style={{ left: dropSlot.x, top: dropSlot.y }} />}
       </div>
       {!root && <div className="mm-hint">这个项目还没有节点。</div>}
-      {root && !readOnly && <div className="mm-hint">拖动背景平移 · Ctrl/⌘ + 滚轮缩放 · 拖动节点到另一个节点上可移动</div>}
+      {root && !readOnly && <div className="mm-hint">拖动背景平移 · Ctrl/⌘ + 滚轮缩放 · 拖动节点：放到节点上成为子节点，放到上下沿调整顺序，一级分支拖到根节点另一侧换边</div>}
       <div className="mm-controls">
         <button onClick={() => zoomBy(1 / 1.2)} title="缩小">
           −

@@ -29,6 +29,7 @@ const TOOL_FIELD: Record<string, string> = {
   priority: '优先级',
   tags: '标签',
   kind: '类型',
+  side: '导图方向',
 };
 
 function inputOf(t: ToolCall): Record<string, unknown> {

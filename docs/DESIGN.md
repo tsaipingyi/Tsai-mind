@@ -82,6 +82,7 @@ AccessToken（Claude 接入用的令牌）
 | priority | 1 到 4 | 1 最高 |
 | tags | text[] | 自由标签 |
 | last_nudged_at | timestamp 或 null | 上次催办时间，节点上显示「3 天前催过」 |
+| side | `left` / `right` / null | 一级分支在导图上画在根节点的哪一边；null 表示自动平衡（按顺序前几个在右、其余在左，两边节点数尽量相当）。拖动分支到另一边时写入 |
 | version | int | 每次修改加一；Claude 写操作必须带上 |
 | created_at, updated_at, deleted_at | | 审计与软删除，30 天内可恢复 |
 
@@ -139,7 +140,9 @@ parent.due_date   = max(child.due_date)
 
 导图节点上显示三样东西：负责人头像、到期日、进度环。逾期日期变红，blocked 边框变红，done 变淡，待确认的右上角一个橘点。
 
-快捷键沿用 XMind：Tab 加子节点，Enter 加兄弟节点，Delete 删除，方向键移动焦点，空格展开收起，`@` 指派负责人，`/` 命令面板。
+导图是 XMind 式的平衡布局：根节点居中，一级分支分列左右（见 side 字段），左侧分支向左生长。拖动节点：放到另一个节点上变成它的子节点；放到节点的上沿或下沿插到它前面或后面；把一级分支拖到根节点左右的空白处换边。
+
+快捷键沿用 XMind：Tab 加子节点，Enter 加兄弟节点，Delete 删除，方向键移动焦点（左侧分支镜像），空格展开收起，`@` 指派负责人，`/` 命令面板。
 
 ### 4.2 时间进度
 

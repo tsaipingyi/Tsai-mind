@@ -766,6 +766,32 @@ label.field > span,
 .mm-node.dragging {
   opacity: 0.5;
 }
+.mm-node.drop-before::before,
+.mm-node.drop-after::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--orange);
+  pointer-events: none;
+}
+.mm-node.drop-before::before {
+  top: -10px;
+}
+.mm-node.drop-after::before {
+  bottom: -10px;
+}
+.mm-drop-slot {
+  position: absolute;
+  width: 200px;
+  height: 52px;
+  border: 2px dashed var(--orange);
+  border-radius: 8px;
+  background: var(--orange-soft);
+  pointer-events: none;
+}
 .mm-node .t {
   font-size: 14px;
   font-weight: 700;

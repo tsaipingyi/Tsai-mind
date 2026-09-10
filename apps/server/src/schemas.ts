@@ -24,6 +24,7 @@ export const nodePatch = z
     priority: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     tags: z.array(z.string()),
     lastNudgedAt: z.string().nullable(),
+    side: z.enum(['left', 'right']).nullable(),
   })
   .partial()
   .strict();
@@ -46,6 +47,7 @@ export const newNodeInput = z.object({
   estimateHours: z.number().nonnegative().nullable().optional(),
   priority: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   tags: z.array(z.string()).optional(),
+  side: z.enum(['left', 'right']).nullable().optional(),
 });
 
 const opBase = { opId: uuid, clientId: z.string().min(1), projectId: uuid, actor, at: z.string() };

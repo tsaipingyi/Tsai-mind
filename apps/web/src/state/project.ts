@@ -305,7 +305,7 @@ export const useProject = create<ProjectState>((set, get) => {
       const eff: NodePatch = {};
       for (const [k, v] of Object.entries(patch) as [keyof NodePatch, unknown][]) {
         const cur = n[k];
-        const same = Array.isArray(v) && Array.isArray(cur) ? v.length === cur.length && v.every((x, i) => x === cur[i]) : v === cur;
+        const same = Array.isArray(v) && Array.isArray(cur) ? v.length === cur.length && v.every((x, i) => x === cur[i]) : v === cur || (v == null && cur == null);
         if (!same) (eff as Record<string, unknown>)[k] = v;
       }
       if (!Object.keys(eff).length) return true;

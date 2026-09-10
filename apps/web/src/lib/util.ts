@@ -38,6 +38,7 @@ export const FIELD_LABEL: Record<string, string> = {
   estimateHours: '预估工时',
   priority: '优先级',
   tags: '标签',
+  side: '导图方向',
   delete: '删除',
   status_done: '标记完成',
 };
@@ -97,6 +98,7 @@ export function valueLabel(field: string, v: unknown, contacts: Contact[]): stri
   if (field === 'kind') return KIND_LABEL[v as TNode['kind']] ?? String(v);
   if (field === 'dueDate' || field === 'startDate') return fmtDate(String(v));
   if (field === 'progress') return `${v}%`;
+  if (field === 'side') return v === 'left' ? '左侧' : v === 'right' ? '右侧' : '自动';
   if (Array.isArray(v)) return v.join(', ');
   if (typeof v === 'boolean') return v ? '是' : '否';
   return String(v);

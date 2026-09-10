@@ -31,6 +31,7 @@ export const FIELD_LABEL: Record<string, string> = {
   estimateHours: '预估工时',
   priority: '优先级',
   tags: '标签',
+  side: '导图方向',
   delete: '删除',
   status_done: '标记完成',
 };
