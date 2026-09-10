@@ -827,7 +827,7 @@ export class DemoServer {
     };
   }
 
-  private createProject(input: { name?: string; outline?: string }) {
+  createProject(input: { name?: string; outline?: string }) {
     const name = String(input.name ?? '').trim();
     if (!name) throw badRequest('name is required');
     const id = newId();

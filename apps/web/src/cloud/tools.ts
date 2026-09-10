@@ -154,6 +154,15 @@ export function buildTools(server: DemoServer, observe: ToolObserver): SampleToo
       server.projectRows().map((r) => ({ id: r.id, name: r.name, rootNodeId: r.rootNodeId, rootTitle: r.rootTitle, overdueCount: r.overdueCount, pendingCount: r.pendingCount, nodeCount: r.nodeCount, archived: !!r.archivedAt })),
     ),
     def(
+      'create_project',
+      'Create a new project. name is required; outline is an optional indented Markdown outline (one node per line, indent = hierarchy, tokens: @负责人, 9/1–9/12 dates, status word, NN%). Returns the project id, root node id and node count.',
+      { type: 'object', properties: { name: { type: 'string' }, outline: { type: 'string' } }, required: ['name'] },
+      (a) => {
+        const r = server.createProject({ name: str(a.name), outline: optStr(a.outline) }) as { project: { id: string; name: string; rootNodeId: string }; nodes: unknown[]; warnings?: unknown[] };
+        return { projectId: r.project.id, name: r.project.name, rootNodeId: r.project.rootNodeId, nodeCount: r.nodes.length, warnings: r.warnings ?? [] };
+      },
+    ),
+    def(
       'get_tree',
       'Return a whole project tree. format "outline" gives an indented Markdown outline (each line: title [id] @owner dates status progress%); "json" gives nodes with derived rollup values. depth limits levels (1 = root only).',
       { type: 'object', properties: { project_id: { type: 'string' }, depth: { type: 'integer', minimum: 1 }, format: { type: 'string', enum: ['outline', 'json'] } }, required: ['project_id'] },
