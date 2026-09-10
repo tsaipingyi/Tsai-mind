@@ -14,3 +14,6 @@ Single-user, mind-map-first project manager. Design docs live in `docs/` (DESIGN
 - Claude's edits to key fields (dueDate, startDate, ownerId, delete, status→done) become pending `change` rows; everything else applies directly. Use core `splitPatch` / `opNeedsConfirmation`; never duplicate that logic.
 - UI text is Simplified Chinese. Dates are `YYYY-MM-DD` strings end to end.
 - Commands: `pnpm install`, `pnpm typecheck`, `pnpm test`, `pnpm dev:server`, `pnpm dev:web`.
+
+## Cloud edition (no server)
+The owner uses the app as a claude.ai artifact (`apps/web` cloud build, `pnpm --filter @tsai-mind/web build:cloud`). Its data is the artifact database. To read or change the owner's plans from a Claude Code session, follow `.claude/skills/tsai-mind/SKILL.md` (scripts in `scripts/cloud-*.mjs`).
