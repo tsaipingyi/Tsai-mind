@@ -3,7 +3,10 @@
  * Behaviour comes from @tsai-mind/core exactly like the real server: one TreeStore per project,
  * ops applied through TreeStore.apply, Claude's key-field edits split with splitPatch into pending
  * changes, undo via store.inverseOf, outlines via parseOutline/planOps/serializeOutline.
- * Nothing is persisted — reloading the page rebuilds the seed.
+ * In demo mode nothing is persisted — reloading the page rebuilds the seed. In cloud mode
+ * (src/cloud) the server is seeded empty, every mutation reports the document it touched through
+ * `onDirty`, whole documents are exported / imported with the *Doc methods, and the `assistant`
+ * driver is swapped for one backed by the artifact's `sample` capability.
  */
 import {
   DEFAULT_KEY_FIELDS,
@@ -83,7 +86,7 @@ interface LogEntry {
   undoneBy: number | null;
 }
 
-interface ProjectState {
+export interface ProjectState {
   project: Project;
   store: TreeStore;
   deps: Dependency[];
@@ -91,6 +94,61 @@ interface ProjectState {
   serverSeq: number;
   activity: Activity[];
 }
+
+/** Which persisted document a mutation touched (cloud mode listens to this). */
+export type DirtyKind = 'account' | 'contacts' | 'project' | 'project-delete' | 'chat' | 'chat-delete';
+
+/** Serialized shape of one `projects/<id>` document (cloud mode). */
+export interface ProjectDoc {
+  project: Project;
+  nodes: TNode[];
+  dependencies: Dependency[];
+  changes: Change[];
+  batches: PlanBatch[];
+  activity: Activity[];
+  opLog: LogEntry[];
+  serverSeq: number;
+  updatedAt: string;
+}
+
+export interface ChatDoc {
+  session: AssistantSession;
+  messages: AssistantMessage[];
+  updatedAt: string;
+}
+
+/** What the assistant route delegates to: the scripted demo answer, or `sample` in cloud mode. */
+export interface AssistantReply {
+  text: string;
+  toolCalls: NonNullable<AssistantMessage['toolCalls']>;
+}
+export interface AssistantFailure {
+  message: string;
+  /** partial answer that may stay on screen */
+  text?: string;
+  toolCalls?: AssistantReply['toolCalls'];
+  /** true for a user-initiated stop: no error event */
+  silent?: boolean;
+}
+export interface AssistantRequest {
+  session: AssistantSession;
+  userText: string;
+  projectId: string | null;
+  /** the stored conversation so far (the new user message included, last) */
+  history: AssistantMessage[];
+  signal: AbortSignal | null;
+  emit: (event: 'text' | 'tool', data: unknown) => void;
+}
+export interface AssistantDriver {
+  status(): Promise<{ configured: boolean; model?: string | null; message?: string }> | { configured: boolean; model?: string | null; message?: string };
+  /** Resolve with the final answer; reject with an {@link AssistantFailure}. */
+  reply(req: AssistantRequest): Promise<AssistantReply>;
+}
+
+const KEEP_DELETED_DAYS = 30;
+const KEEP_ACTIVITY = 200;
+const KEEP_OPS = 100;
+const KEEP_MESSAGES = 200;
 
 interface SlipInfo {
   fromNode: string;
@@ -136,8 +194,12 @@ export class DemoServer {
   private messages: Map<string, AssistantMessage[]>;
   private actId = 1000;
   private routes: Route[] = [];
+  /** Cloud mode: called after every mutation with the document it touched. */
+  onDirty: ((kind: DirtyKind, id: string) => void) | null = null;
+  /** Answers chat messages; the scripted demo reply unless cloud mode installs `sample`. */
+  assistant: AssistantDriver;
 
-  constructor(seed: Seed = buildSeed(todayIso())) {
+  constructor(seed: Seed = buildSeed(todayIso()), assistant?: AssistantDriver) {
     this.seededAt = nowIso();
     this.account = seed.account;
     this.tokens = seed.tokens;
@@ -149,7 +211,116 @@ export class DemoServer {
     this.batches = seed.batches;
     this.sessions = seed.sessions;
     this.messages = seed.messages;
+    this.assistant = assistant ?? new ScriptedAssistant(this);
     this.defineRoutes();
+  }
+
+  private dirty(kind: DirtyKind, id: string): void {
+    try {
+      this.onDirty?.(kind, id);
+    } catch {
+      /* never let persistence break a request */
+    }
+  }
+
+  // ----- persistence (cloud mode): whole-document export / import -----
+
+  projectIds(): string[] {
+    return [...this.projects.keys()];
+  }
+  sessionIds(): string[] {
+    return this.sessions.map((s) => s.id);
+  }
+
+  exportAccountDoc(): Record<string, unknown> {
+    return { account: this.account, tokens: this.tokens, updatedAt: nowIso() };
+  }
+  importAccountDoc(doc: Record<string, unknown>): void {
+    const a = doc.account as Account | undefined;
+    if (a && typeof a === 'object' && a.id) this.account = { ...a, settings: a.settings ?? {} };
+    if (Array.isArray(doc.tokens)) this.tokens = doc.tokens as TokenSummary[];
+  }
+
+  exportContactsDoc(): Record<string, unknown> {
+    return { contacts: this.contacts, updatedAt: nowIso() };
+  }
+  importContactsDoc(doc: Record<string, unknown>): void {
+    if (Array.isArray(doc.contacts)) this.contacts = doc.contacts as Contact[];
+  }
+
+  exportProjectDoc(id: string): ProjectDoc | null {
+    const ps = this.projects.get(id);
+    if (!ps) return null;
+    const cutoff = `${addDays(todayIso(), -KEEP_DELETED_DAYS)}T00:00:00.000Z`;
+    const nodes = [...ps.store.nodes.values()].filter((n) => !n.deletedAt || n.deletedAt > cutoff);
+    return {
+      project: ps.project,
+      nodes,
+      dependencies: ps.deps,
+      changes: this.changes.filter((c) => ps.store.get(c.nodeId)),
+      batches: this.batches.filter((b) => b.projectId === id),
+      activity: ps.activity.slice(-KEEP_ACTIVITY),
+      opLog: ps.log.slice(-KEEP_OPS),
+      serverSeq: ps.serverSeq,
+      updatedAt: nowIso(),
+    };
+  }
+  importProjectDoc(doc: ProjectDoc): void {
+    const id = doc.project?.id;
+    if (!id || !Array.isArray(doc.nodes)) return;
+    const old = this.projects.get(id);
+    const ps: ProjectState = {
+      project: doc.project,
+      store: new TreeStore(doc.nodes),
+      deps: Array.isArray(doc.dependencies) ? doc.dependencies : [],
+      log: Array.isArray(doc.opLog) ? doc.opLog : [],
+      serverSeq: typeof doc.serverSeq === 'number' ? doc.serverSeq : 0,
+      activity: Array.isArray(doc.activity) ? doc.activity : [],
+    };
+    // swap the rows that belong to this project in the global change / batch lists
+    const ownsNode = (nodeId: string) => (old ? !!old.store.get(nodeId) : false) || !!ps.store.get(nodeId);
+    this.changes = [...this.changes.filter((c) => !ownsNode(c.nodeId)), ...(Array.isArray(doc.changes) ? doc.changes : [])];
+    this.batches = [...this.batches.filter((b) => b.projectId !== id), ...(Array.isArray(doc.batches) ? doc.batches : [])];
+    for (const a of ps.activity) if (typeof a.id === 'number' && a.id >= this.actId) this.actId = a.id + 1;
+    this.projects.set(id, ps);
+  }
+  removeProject(id: string): boolean {
+    const ps = this.projects.get(id);
+    if (!ps) return false;
+    this.projects.delete(id);
+    this.changes = this.changes.filter((c) => !ps.store.get(c.nodeId));
+    this.batches = this.batches.filter((b) => b.projectId !== id);
+    return true;
+  }
+
+  exportChatDoc(sessionId: string): ChatDoc | null {
+    const s = this.sessions.find((x) => x.id === sessionId);
+    if (!s) return null;
+    return { session: s, messages: (this.messages.get(sessionId) ?? []).slice(-KEEP_MESSAGES), updatedAt: nowIso() };
+  }
+  importChatDoc(doc: ChatDoc): void {
+    const s = doc.session;
+    if (!s || !s.id) return;
+    const i = this.sessions.findIndex((x) => x.id === s.id);
+    if (i >= 0) this.sessions[i] = s;
+    else this.sessions.push(s);
+    this.messages.set(s.id, Array.isArray(doc.messages) ? doc.messages : []);
+  }
+  removeChat(sessionId: string): boolean {
+    const i = this.sessions.findIndex((x) => x.id === sessionId);
+    if (i < 0) return false;
+    this.sessions.splice(i, 1);
+    this.messages.delete(sessionId);
+    return true;
+  }
+
+  /** Account name / settings as the assistant instructions need them. */
+  accountInfo(): Account {
+    return this.account;
+  }
+  /** Live contacts (cloud tools). */
+  liveContacts(): Contact[] {
+    return this.contacts.filter((c) => !c.archivedAt);
   }
 
   // ----- routing -----
@@ -205,6 +376,7 @@ export class DemoServer {
       if (b.name !== undefined) this.account.name = String(b.name).trim() || this.account.name;
       if (b.timezone !== undefined) this.account.timezone = String(b.timezone).trim() || this.account.timezone;
       if (b.settings !== undefined) this.account.settings = { ...this.account.settings, ...b.settings };
+      this.dirty('account', 'account');
       return json({ account: this.account });
     });
     this.on('GET', '/api/tokens', () => json(this.tokens));
@@ -223,7 +395,13 @@ export class DemoServer {
         ps.project = { ...ps.project, name };
       }
       if (b.archivedAt !== undefined) ps.project = { ...ps.project, archivedAt: b.archivedAt };
+      this.dirty('project', ps.project.id);
       return json(ps.project);
+    });
+    this.on('DELETE', '/api/projects/:id', (p) => {
+      if (!this.removeProject(p.id!)) throw notFound('project');
+      this.dirty('project-delete', p.id!);
+      return json({ ok: true });
     });
     this.on('GET', '/api/projects/:id/outline', (p) => text(this.outline(this.proj(p.id!))));
     this.on('GET', '/api/projects/:id/ops', (p, q) => {
@@ -295,9 +473,7 @@ export class DemoServer {
       const b = (body ?? {}) as Partial<Contact>;
       const name = String(b.name ?? '').trim();
       if (!name) throw badRequest('name is required');
-      const c: Contact = { id: newId(), name, company: b.company ?? null, email: b.email ?? null, phone: b.phone ?? null, notes: b.notes ?? null, archivedAt: null };
-      this.contacts.push(c);
-      return json(c, 201);
+      return json(this.createContact({ name, company: b.company, email: b.email, phone: b.phone, notes: b.notes }), 201);
     });
     this.on('PATCH', '/api/contacts/:id', (p, _q, body) => {
       const c = this.contacts.find((x) => x.id === p.id);
@@ -308,12 +484,14 @@ export class DemoServer {
         c.name = String(b.name).trim();
       }
       for (const k of ['company', 'email', 'phone', 'notes', 'archivedAt'] as const) if (b[k] !== undefined) (c as unknown as Record<string, unknown>)[k] = b[k];
+      this.dirty('contacts', 'contacts');
       return json(c);
     });
     this.on('DELETE', '/api/contacts/:id', (p) => {
       const c = this.contacts.find((x) => x.id === p.id);
       if (!c) throw notFound('contact');
       c.archivedAt = nowIso();
+      this.dirty('contacts', 'contacts');
       return json(c);
     });
     this.on('GET', '/api/contacts/:id/nodes', (p) => {
@@ -328,11 +506,12 @@ export class DemoServer {
       const b = this.batch(p.id!);
       if (b.status !== 'draft') throw new HttpErr(409, 'not_draft', `plan batch is ${b.status}`);
       b.status = 'discarded';
+      this.dirty('project', b.projectId);
       return json(b);
     });
 
     // assistant
-    this.on('GET', '/api/assistant/status', () => json({ configured: true, model: 'claude-opus-5' }));
+    this.on('GET', '/api/assistant/status', async () => json(await this.assistant.status()));
     this.on('GET', '/api/assistant/sessions', (_p, q) => {
       const pid = q.get('projectId');
       const list = this.sessions.filter((s) => !pid || s.projectId === pid).sort((a, b) => ((a.updatedAt ?? a.createdAt) < (b.updatedAt ?? b.createdAt) ? 1 : -1));
@@ -343,6 +522,7 @@ export class DemoServer {
       const s: AssistantSession = { id: newId(), title: b.title ?? null, projectId: b.projectId ?? null, createdAt: nowIso(), updatedAt: nowIso() };
       this.sessions.unshift(s);
       this.messages.set(s.id, []);
+      this.dirty('chat', s.id);
       return json(s, 201);
     });
     this.on('GET', '/api/assistant/sessions/:id', (p) => {
@@ -355,6 +535,7 @@ export class DemoServer {
       if (i < 0) throw notFound('session');
       this.sessions.splice(i, 1);
       this.messages.delete(p.id!);
+      this.dirty('chat-delete', p.id!);
       return json({ ok: true });
     });
     this.on('POST', '/api/assistant/sessions/:id/messages', (p, _q, body, signal) => {
@@ -369,13 +550,13 @@ export class DemoServer {
 
   // ----- lookups -----
 
-  private proj(id: string): ProjectState {
+  proj(id: string): ProjectState {
     const ps = this.projects.get(id);
     if (!ps) throw notFound('project');
     return ps;
   }
 
-  private locate(nodeId: string): { ps: ProjectState; node: TNode } {
+  locate(nodeId: string): { ps: ProjectState; node: TNode } {
     for (const ps of this.projects.values()) {
       const node = ps.store.live(nodeId);
       if (node) return { ps, node };
@@ -394,7 +575,7 @@ export class DemoServer {
     return { requireConfirmation: s.requireConfirmation ?? true, keyFields: s.keyFields ?? DEFAULT_KEY_FIELDS };
   }
 
-  private withCtx(c: Change): PendingChange {
+  withCtx(c: Change): PendingChange {
     for (const ps of this.projects.values()) {
       const n = ps.store.get(c.nodeId);
       if (n) return { ...c, nodeTitle: n.title, projectId: ps.project.id, projectName: ps.project.name };
@@ -407,8 +588,16 @@ export class DemoServer {
     return this.changes.filter((c) => c.status === 'pending' && ps.store.get(c.nodeId));
   }
 
+  /** Pending changes with node/project context, optionally for one project (cloud tools). */
+  pendingChanges(projectId?: string): PendingChange[] {
+    const rows = projectId ? this.pendingFor(projectId) : this.changes.filter((c) => c.status === 'pending');
+    return rows.map((c) => this.withCtx(c));
+  }
+
   private logActivity(ps: ProjectState, nodeId: string | null, actor: Actor | string, kind: string, payload: Record<string, unknown> | null): void {
     ps.activity.push({ id: this.actId++, nodeId, actor, kind, payload: { ...(payload ?? {}), projectId: ps.project.id }, createdAt: nowIso() });
+    if (ps.activity.length > KEEP_ACTIVITY * 2) ps.activity.splice(0, ps.activity.length - KEEP_ACTIVITY);
+    this.dirty('project', ps.project.id);
   }
 
   private slipsOf(ps: ProjectState, derived: Map<string, Derived>): SlipInfo[] {
@@ -417,7 +606,7 @@ export class DemoServer {
 
   // ----- ops (mirrors apps/server/src/service/ops.ts) -----
 
-  private applyOps(ps: ProjectState, ops: Op[], opts: { actor?: Actor; clientId?: string; reason?: string; skipConfirmation?: boolean } = {}): { results: OpResult[]; serverSeq: number; changes: Change[] } {
+  applyOps(ps: ProjectState, ops: Op[], opts: { actor?: Actor; clientId?: string; reason?: string; skipConfirmation?: boolean } = {}): { results: OpResult[]; serverSeq: number; changes: Change[] } {
     const settings = this.settings();
     const results: OpResult[] = [];
     const newChanges: Change[] = [];
@@ -514,6 +703,7 @@ export class DemoServer {
       }
       const serverSeq = ++ps.serverSeq;
       ps.log.push({ serverSeq, op: effective, inverse, receivedAt: now, undoneBy: null });
+      if (ps.log.length > KEEP_OPS * 2) ps.log.splice(0, ps.log.length - KEEP_OPS);
       const act = activityFor(effective, before, res.changed);
       this.logActivity(ps, targetId, op.actor, act.kind, act.payload);
 
@@ -589,9 +779,18 @@ export class DemoServer {
     return { change: this.withCtx(c) };
   }
 
+  createContact(input: { name: string; company?: string | null; email?: string | null; phone?: string | null; notes?: string | null }): Contact {
+    const name = String(input.name ?? '').trim();
+    if (!name) throw badRequest('name is required');
+    const c: Contact = { id: newId(), name, company: input.company ?? null, email: input.email ?? null, phone: input.phone ?? null, notes: input.notes ?? null, archivedAt: null };
+    this.contacts.push(c);
+    this.dirty('contacts', 'contacts');
+    return c;
+  }
+
   // ----- projects -----
 
-  private projectRows() {
+  projectRows() {
     const today = todayIso();
     const out = [];
     for (const ps of this.projects.values()) {
@@ -680,13 +879,13 @@ export class DemoServer {
     return { project: ps.project, nodes: ps.store.all(), warnings, results };
   }
 
-  private outline(ps: ProjectState): string {
+  outline(ps: ProjectState): string {
     const deps = new Map<string, string[]>();
     for (const d of ps.deps) deps.set(d.toNode, [...(deps.get(d.toNode) ?? []), d.fromNode]);
     return serializeOutline(ps.store, null, { contacts: this.contacts, year: year(), deps, derived: computeRollup(ps.store) });
   }
 
-  private nodeRefs(pred: (n: TNode) => boolean) {
+  nodeRefs(pred: (n: TNode) => boolean) {
     const out = [];
     for (const ps of this.projects.values()) {
       if (ps.project.archivedAt) continue;
@@ -699,7 +898,7 @@ export class DemoServer {
     return out.sort((a, b) => (a.node.updatedAt < b.node.updatedAt ? 1 : -1));
   }
 
-  private today() {
+  today() {
     const today = todayIso();
     const pending = this.changes.filter((c) => c.status === 'pending').map((c) => this.withCtx(c));
     type Flat = TodayItem & { projectId: string; projectName: string };
@@ -719,7 +918,7 @@ export class DemoServer {
     return res;
   }
 
-  private nudge(nodeId: string, template?: string): { text: string; node: TNode } {
+  nudge(nodeId: string, template?: string, actor: Actor = 'user'): { text: string; node: TNode } {
     const { ps, node } = this.locate(nodeId);
     const derived = computeRollup(ps.store).get(nodeId)!;
     const owner = node.ownerId ? (this.contacts.find((c) => c.id === node.ownerId)?.name ?? '') : this.account.name;
@@ -731,13 +930,13 @@ export class DemoServer {
       .replace(/\{progress\}/g, String(derived.progress))
       .replace(/\{owner\}/g, owner)
       .replace(/\{path\}/g, ps.store.path(nodeId).join(' / '));
-    const out = this.applyOps(ps, [{ opId: newId(), clientId: 'server', projectId: ps.project.id, actor: 'user', at: nowIso(), type: 'update_node', nodeId, patch: { lastNudgedAt: nowIso() } }]);
+    const out = this.applyOps(ps, [{ opId: newId(), clientId: actor === 'claude' ? 'claude' : 'server', projectId: ps.project.id, actor, at: nowIso(), type: 'update_node', nodeId, patch: { lastNudgedAt: nowIso() } }], { skipConfirmation: true });
     const r = out.results[0]!;
     if (!r.ok) throw new HttpErr(409, r.error ?? 'apply_failed', r.message ?? 'could not record nudge');
     return { text: txt, node: r.node! };
   }
 
-  private addDependency(from: string, to: string): void {
+  addDependency(from: string, to: string, actor: Actor = 'user'): void {
     if (from === to) throw badRequest('a node cannot depend on itself');
     const a = this.locate(from);
     const b = this.locate(to);
@@ -745,15 +944,15 @@ export class DemoServer {
     if (dependencyWouldCycle(a.ps.deps, from, to))
       throw new HttpErr(409, 'dependency_cycle', `「${a.node.title}」已经（直接或间接）依赖「${b.node.title}」，再加这条依赖会形成循环`, { fromNode: from, toNode: to });
     if (!a.ps.deps.some((d) => d.fromNode === from && d.toNode === to)) a.ps.deps.push({ fromNode: from, toNode: to });
-    this.logActivity(a.ps, to, 'user', 'dependency_added', { fromNode: from, toNode: to });
+    this.logActivity(a.ps, to, actor, 'dependency_added', { fromNode: from, toNode: to });
   }
 
-  private removeDependency(from: string, to: string): boolean {
+  removeDependency(from: string, to: string, actor: Actor = 'user'): boolean {
     for (const ps of this.projects.values()) {
       const i = ps.deps.findIndex((d) => d.fromNode === from && d.toNode === to);
       if (i < 0) continue;
       ps.deps.splice(i, 1);
-      this.logActivity(ps, to, 'user', 'dependency_removed', { fromNode: from, toNode: to });
+      this.logActivity(ps, to, actor, 'dependency_removed', { fromNode: from, toNode: to });
       return true;
     }
     return false;
@@ -761,7 +960,7 @@ export class DemoServer {
 
   // ----- plan batches -----
 
-  private draftPlan(ps: ProjectState, parentId: string, outline: string, mode: PlanMode, actor: Actor): PlanBatch {
+  draftPlan(ps: ProjectState, parentId: string, outline: string, mode: PlanMode, actor: Actor): PlanBatch {
     if (!ps.store.live(parentId)) throw notFound('parent node');
     const plan = planOps(ps.store, parseOutline(outline, { year: year() }), {
       projectId: ps.project.id,
@@ -773,6 +972,7 @@ export class DemoServer {
     });
     const batch: PlanBatch = { id: newId(), projectId: ps.project.id, parentId, mode, outline, diff: { ops: plan.ops, summary: plan.summary, created: plan.created, errors: plan.errors }, status: 'draft' };
     this.batches.push(batch);
+    this.dirty('project', ps.project.id);
     return batch;
   }
 
@@ -790,15 +990,7 @@ export class DemoServer {
     return { batch: b, results: out.results, serverSeq: out.serverSeq };
   }
 
-  // ----- assistant (scripted) -----
-
-  private pickNode(ps: ProjectState, userText: string): { node: TNode; derived: Derived } | null {
-    const derived = computeRollup(ps.store);
-    const leaves = ps.store.all().filter((n) => n.parentId !== null && !derived.get(n.id)?.hasChildren && n.kind !== 'note');
-    const named = leaves.filter((n) => n.title && userText.includes(n.title)).sort((a, b) => b.title.length - a.title.length)[0];
-    const pick = named ?? leaves.find((n) => n.title === '接口联调') ?? leaves.find((n) => derived.get(n.id)?.dueDate) ?? leaves[0];
-    return pick ? { node: pick, derived: derived.get(pick.id)! } : null;
-  }
+  // ----- assistant -----
 
   private streamReply(session: AssistantSession, userText: string, projectId: string | null, signal: AbortSignal | null): Response {
     const enc = new TextEncoder();
@@ -807,6 +999,7 @@ export class DemoServer {
     msgs.push({ id: newId(), role: 'user', text: userText, createdAt: nowIso() });
     if (!session.title) session.title = userText.length > 18 ? `${userText.slice(0, 18)}…` : userText;
     session.updatedAt = nowIso();
+    this.dirty('chat', session.id);
 
     let closed = false;
     const stream = new ReadableStream<Uint8Array>({
@@ -825,60 +1018,23 @@ export class DemoServer {
           }
         };
         signal?.addEventListener('abort', finish);
+        const save = (text: string, toolCalls: AssistantReply['toolCalls']): string => {
+          const id = newId();
+          if (text || toolCalls.length) msgs.push({ id, role: 'assistant', text, toolCalls, createdAt: nowIso() });
+          session.updatedAt = nowIso();
+          this.dirty('chat', session.id);
+          return id;
+        };
         void (async () => {
-          const chunks: string[] = [];
-          const say = async (delta: string, ms = 160) => {
-            await sleep(ms);
-            chunks.push(delta);
-            emit('text', { delta });
-          };
-          const toolCalls: AssistantMessage['toolCalls'] = [];
           try {
-            await say(`${DEMO_PREFIX}好的，`, 220);
-            const ps = (projectId && this.projects.get(projectId)) || [...this.projects.values()][0];
-            const picked = ps ? this.pickNode(ps, userText) : null;
-            if (ps && picked) {
-              const { node, derived } = picked;
-              const oldDue = node.dueDate ?? derived.dueDate ?? todayIso();
-              const newDue = addDays(oldDue, 5);
-              const reason = `${DEMO_PREFIX}按你的要求把「${node.title}」顺延 5 天`;
-              // like the server, a second proposal on a field that already has a pending change reuses that change
-              const existing = this.changes.find((c) => c.nodeId === node.id && c.field === 'dueDate' && c.status === 'pending');
-              const op: Op = { opId: newId(), clientId: 'claude', projectId: ps.project.id, actor: 'claude', at: nowIso(), type: 'update_node', nodeId: node.id, patch: { dueDate: newDue }, baseVersion: node.version };
-              const out = this.applyOps(ps, [op], { reason });
-              const r = out.results[0]!;
-              const pending = !!r.changeIds?.length;
-              const result = r.ok
-                ? { ok: true, status: pending ? 'pending' : 'applied', ...(pending ? { changeIds: r.changeIds } : {}), node: { id: node.id, title: node.title, dueDate: pending ? oldDue : newDue } }
-                : { ok: false, error: r.error, message: r.message };
-              const input = { nodeId: node.id, patch: { dueDate: newDue }, reason };
-              await sleep(260);
-              toolCalls.push({ name: 'update_node', input, resultText: JSON.stringify(result, null, 2) });
-              emit('tool', { name: 'update_node', input, result });
-              const fmt = (iso: string) => shortDate(iso, year());
-              if (!r.ok) await say(`我试着改**${node.title}**的截止日，但没成功：${r.message ?? r.error}。`, 240);
-              else if (pending && existing) {
-                await say(`**${node.title}**的截止日已经有一条待确认的改动（${fmt(oldDue)} → ${fmt(String(existing.newValue))}），我没有再提一条。`, 240);
-                await say('\n\n- 先在右上角「待确认」或右侧栏里处理那条就行', 140);
-                await say('\n- 确认之后再找我，我可以继续往后挪', 140);
-              } else if (pending) {
-                await say(`我把**${node.title}**的截止日从 ${fmt(oldDue)} 推到 ${fmt(newDue)}。`, 240);
-                await say('\n\n- 截止日是关键字段，这条改动进了「待确认」', 140);
-                await say('\n- 在右上角「待确认」或右侧栏里确认或拒绝就行', 140);
-              } else {
-                await say(`我把**${node.title}**的截止日从 ${fmt(oldDue)} 推到 ${fmt(newDue)}，已经直接生效。`, 240);
-                await say('\n\n- 你在设置里关掉了「关键字段需要确认」，所以没有进待确认', 140);
-              }
-            } else {
-              await say('这个项目里还没有可以调整的任务。先在导图里加几个节点，再来找我。', 240);
-            }
-            const full = chunks.join('');
-            const id = newId();
-            msgs.push({ id, role: 'assistant', text: full, toolCalls, createdAt: nowIso() });
-            session.updatedAt = nowIso();
-            emit('done', { messageId: id, text: full });
+            const r = await this.assistant.reply({ session, userText, projectId, history: msgs, signal, emit });
+            const id = save(r.text, r.toolCalls);
+            emit('done', { messageId: id, text: r.text });
           } catch (e) {
-            emit('error', { message: (e as Error).message ?? String(e) });
+            const f = (e ?? {}) as Partial<AssistantFailure>;
+            const id = save(f.text ?? '', f.toolCalls ?? []);
+            if (!f.silent) emit('error', { message: f.message ?? (e as Error)?.message ?? String(e) });
+            if (f.text) emit('done', { messageId: id, text: f.text });
           } finally {
             finish();
           }
@@ -889,6 +1045,83 @@ export class DemoServer {
       },
     });
     return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' } });
+  }
+}
+
+// ---------- the scripted demo assistant ----------
+
+/**
+ * Demo answer: always proposes to push one task's due date by 5 days through applyOps (actor
+ * 'claude'), so the change lands in 待确认 exactly like the real assistant's would.
+ */
+export class ScriptedAssistant implements AssistantDriver {
+  constructor(private server: DemoServer) {}
+
+  status() {
+    return { configured: true, model: 'claude-opus-5' };
+  }
+
+  private pickNode(ps: ProjectState, userText: string): { node: TNode; derived: Derived } | null {
+    const derived = computeRollup(ps.store);
+    const leaves = ps.store.all().filter((n) => n.parentId !== null && !derived.get(n.id)?.hasChildren && n.kind !== 'note');
+    const named = leaves.filter((n) => n.title && userText.includes(n.title)).sort((a, b) => b.title.length - a.title.length)[0];
+    const pick = named ?? leaves.find((n) => n.title === '接口联调') ?? leaves.find((n) => derived.get(n.id)?.dueDate) ?? leaves[0];
+    return pick ? { node: pick, derived: derived.get(pick.id)! } : null;
+  }
+
+  async reply({ userText, projectId, emit }: AssistantRequest): Promise<AssistantReply> {
+    const chunks: string[] = [];
+    const say = async (delta: string, ms = 160) => {
+      await sleep(ms);
+      chunks.push(delta);
+      emit('text', { delta });
+    };
+    const toolCalls: AssistantReply['toolCalls'] = [];
+    await say(`${DEMO_PREFIX}好的，`, 220);
+    let ps: ProjectState | undefined;
+    try {
+      ps = projectId ? this.server.proj(projectId) : undefined;
+    } catch {
+      ps = undefined;
+    }
+    ps ??= this.server.projectIds().map((id) => this.server.proj(id))[0];
+    const picked = ps ? this.pickNode(ps, userText) : null;
+    if (ps && picked) {
+      const { node, derived } = picked;
+      const oldDue = node.dueDate ?? derived.dueDate ?? todayIso();
+      const newDue = addDays(oldDue, 5);
+      const reason = `${DEMO_PREFIX}按你的要求把「${node.title}」顺延 5 天`;
+      // like the server, a second proposal on a field that already has a pending change reuses that change
+      const existing = this.server.pendingChanges(ps.project.id).find((c) => c.nodeId === node.id && c.field === 'dueDate');
+      const op: Op = { opId: newId(), clientId: 'claude', projectId: ps.project.id, actor: 'claude', at: nowIso(), type: 'update_node', nodeId: node.id, patch: { dueDate: newDue }, baseVersion: node.version };
+      const out = this.server.applyOps(ps, [op], { reason });
+      const r = out.results[0]!;
+      const pending = !!r.changeIds?.length;
+      const result = r.ok
+        ? { ok: true, status: pending ? 'pending' : 'applied', ...(pending ? { changeIds: r.changeIds } : {}), node: { id: node.id, title: node.title, dueDate: pending ? oldDue : newDue } }
+        : { ok: false, error: r.error, message: r.message };
+      const input = { nodeId: node.id, patch: { dueDate: newDue }, reason };
+      await sleep(260);
+      toolCalls.push({ name: 'update_node', input, resultText: JSON.stringify(result, null, 2) });
+      emit('tool', { name: 'update_node', input, result });
+      const fmt = (iso: string) => shortDate(iso, year());
+      if (!r.ok) await say(`我试着改**${node.title}**的截止日，但没成功：${r.message ?? r.error}。`, 240);
+      else if (pending && existing) {
+        await say(`**${node.title}**的截止日已经有一条待确认的改动（${fmt(oldDue)} → ${fmt(String(existing.newValue))}），我没有再提一条。`, 240);
+        await say('\n\n- 先在右上角「待确认」或右侧栏里处理那条就行', 140);
+        await say('\n- 确认之后再找我，我可以继续往后挪', 140);
+      } else if (pending) {
+        await say(`我把**${node.title}**的截止日从 ${fmt(oldDue)} 推到 ${fmt(newDue)}。`, 240);
+        await say('\n\n- 截止日是关键字段，这条改动进了「待确认」', 140);
+        await say('\n- 在右上角「待确认」或右侧栏里确认或拒绝就行', 140);
+      } else {
+        await say(`我把**${node.title}**的截止日从 ${fmt(oldDue)} 推到 ${fmt(newDue)}，已经直接生效。`, 240);
+        await say('\n\n- 你在设置里关掉了「关键字段需要确认」，所以没有进待确认', 140);
+      }
+    } else {
+      await say('这个项目里还没有可以调整的任务。先在导图里加几个节点，再来找我。', 240);
+    }
+    return { text: chunks.join(''), toolCalls };
   }
 }
 

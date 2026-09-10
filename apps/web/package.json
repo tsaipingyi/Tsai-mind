@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "build:demo": "vite build -c vite.demo.config.ts",
+    "build:cloud": "vite build -c vite.cloud.config.ts",
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:cloud": "node e2e/cloud.mjs"
   },
   "dependencies": {
     "@tsai-mind/core": "workspace:*",

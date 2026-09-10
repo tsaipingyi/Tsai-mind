@@ -71,12 +71,25 @@ pnpm --filter @tsai-mind/server token:create
 
 每个打开的项目在内存里有一个 core 的 `TreeStore`。所有编辑先本地 `store.apply`（乐观更新），150ms 内的操作合并成一次 `POST /api/projects/:id/ops`。WebSocket 收到的 op 如果是自己发的就跳过，否则本地应用。服务器拒绝某个 op（版本冲突等）时重新拉取项目并弹提示。
 
+## 云端模式
+
+`pnpm --filter @tsai-mind/web build:cloud` 生成 `dist-cloud/index.html`：一个没有后端的单文件页面，作为 claude.ai 的 Artifact 发布（声明 `capabilities: { db: {}, sample: {}, downloads: {} }`）。代码在 `src/cloud/`，构建时 `VITE_CLOUD=true`。
+
+- **同一套内存服务器**：和演示模式一样，`/api/*` 由 `src/demo/mockApi.ts` 的 `DemoServer` 在页面里回答（HashRouter、固定令牌、无 WebSocket）；`isDemo` 在云端也为真，`isCloud` 区分两者。云端不种演示数据，首次打开只建一个「我的第一个项目」（三个节点）。
+- **持久化**（`src/cloud/persist.ts`）：状态写进 Artifact 的 `db`。文档布局 `meta/account`（账户、设置、令牌、`firstRun`）、`meta/contacts`、`projects/<id>`（项目、节点含 30 天内删除的、依赖、待确认、草案、最近 200 条活动、最近 100 条 op 及其逆操作、`serverSeq`）、`chats/<sessionId>`。每次改动后按文档 400ms 防抖整份 `set()`；`unavailable` 重试一次，其它错误显示在状态里；页面隐藏 / 卸载时尽力冲刷。单个项目文档超过 240 KB 时拒绝写入并提示 `project_too_large`，内存里的状态照常。`onSnapshot` 订阅 `projects`、`meta/*`、`chats`：别的设备写入的、已确认且 `updatedAt` 更新的文档会替换内存里的项目，并在 `window` 上派发 `tsaimind:project-changed`（`detail = { projectId, removed }`），App 收到后重载当前项目。拿不到 `db`（`claude.use('db')` 为 null）时进入「离线」：只在内存里运行，刷新即丢。
+- **状态**：`useCloudStatus()` → `{ state: 'loading' | 'ready' | 'saving' | 'offline' | 'error', message?, firstRun, savedAt, saved }`，`CLOUD_STATE_LABEL` 给出中文；布局里的小药丸消费它，`main.tsx` 在没有消费者时渲染一个兜底的 `#cloud-status`。
+- **Claude**（`src/cloud/assistant.ts`）：`POST /api/assistant/sessions/:id/messages` 仍然是 SSE，但由 `sample(turns, { onText, tools, cache: false, signal, modelTier: 'default' })` 驱动。第一条 user 轮是中文说明（用户是谁、今天日期、关键字段要确认、先 `get_tree` 再改、用大纲里的节点 id、回答简短）加当前项目的大纲（带派生值，最多约 2 万字），然后是保存的历史（最多 30 轮，总量控制在 56 KiB 内），最后是新消息。`limits().tools` 存在时提供页面工具（`src/cloud/tools.ts`，名字和说明与 `apps/server/src/tools/registry.ts` 一致：list_projects、get_tree、get_node、search_nodes、today、create_node、update_node、move_node、delete_node、set_owner、list_contacts、create_contact、add_dependency、nudge、draft_plan、list_pending_changes），每个工具以 `actor: 'claude'` 调用 `DemoServer`，所以关键字段照样进「待确认」；结果压缩到约 4 KB（get_tree 8 KB）。没有工具时说明里告诉 Claude 只能建议。`GET /api/assistant/status` 返回 `{ configured, model: 'claude.ai 内置', message? }`；拒绝码映射成中文（not_granted「你没有允许这个页面使用 Claude」、rate_limited「用得太快了，稍后再试」、refused「Claude 拒绝了这个请求」、cancelled 静默……），已流出的文字保留。
+- **导出**：`exportOutline(projectId)`（`src/cloud/export.ts`）在云端用 `downloads.save({ filename: '<项目名>.md', data })`，别的构建走 Blob 链接。
+- **冒烟测试**：`pnpm --filter @tsai-mind/web e2e:cloud`（先 `build:cloud`）。`e2e/cloud.mjs` 用 `page.addInitScript` 装一个假的 `window.claude`（`db` 用内存 Map + localStorage、`sample` 按脚本流式回答并调用一次 `update_node`、`downloads` 记录调用），覆盖首次种子、Tab 建节点后刷新仍在、Claude 流式 / 工具小片 / 待确认 / 确认生效、导出、跨设备快照、`db` 为 null 时的离线模式。截图 `e2e/out/cloud.png`、`cloud-chat.png`、`cloud-offline.png`。
+
 ## 校验
 
 ```sh
 pnpm --filter @tsai-mind/web typecheck
 pnpm --filter @tsai-mind/web build
 pnpm --filter @tsai-mind/web e2e      # Playwright 冒烟测试，用 page.route 模拟后端，截图到 e2e/out/
+pnpm --filter @tsai-mind/web build:demo && python3 -m http.server 8765 -d dist-demo &  # 然后 node e2e/demo.mjs
+pnpm --filter @tsai-mind/web build:cloud && pnpm --filter @tsai-mind/web e2e:cloud
 ```
 
 冒烟测试覆盖：导图（建节点、指派、命令面板、拖动改父节点、撤销）、大纲、甘特（条 / 依赖 / 延误渲染，拖条和拖端点各发一条 `update_node`，侧栏依赖增删和循环禁用）、按人看板（列、卡片、拖卡片改负责人、筛选）、Claude 面板（模拟的 SSE 流、工具小片、项目重载）、导出下载、打印页、设置页（`PATCH /api/me`、令牌列表）。截图：`mindmap.png`、`outline.png`、`gantt.png`、`board.png`、`chat.png`、`print.png`、`settings.png`、`today.png`、`projects.png`。

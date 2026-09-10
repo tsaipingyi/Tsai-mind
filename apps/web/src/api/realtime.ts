@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { RealtimeMessage } from './types';
 import { isDemo } from '../demo/flag';
+// cloud mode is a demo-mode superset (isDemo is true there): no WebSocket, the in-page server applies ops synchronously
 
 interface RealtimeState {
   connected: boolean;

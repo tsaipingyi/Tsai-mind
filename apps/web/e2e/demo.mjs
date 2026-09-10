@@ -96,7 +96,8 @@ try {
   await page.getByTestId('chat-toggle').click();
   const panel = page.getByTestId('chat-panel');
   await panel.waitFor();
-  assert((await panel.innerText()).includes('claude-opus-5'), 'assistant status shows the model');
+  await panel.getByText('claude-opus-5').waitFor({ timeout: 10000 });
+  assert(true, 'assistant status shows the model');
   await panel.getByLabel('消息').fill('把接口联调延到下周');
   await panel.getByLabel('消息').press('Enter');
   await panel.getByTestId('tool-chip').waitFor({ timeout: 10000 });
