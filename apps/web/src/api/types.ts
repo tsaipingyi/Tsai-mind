@@ -53,6 +53,7 @@ export interface Slip {
 export interface AssistantStatus {
   configured: boolean;
   model?: string | null;
+  message?: string | null;
 }
 
 export interface AssistantSession {

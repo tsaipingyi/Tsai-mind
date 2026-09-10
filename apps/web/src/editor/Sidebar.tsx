@@ -2,13 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { NODE_KINDS, NODE_STATUSES, dependencyWouldCycle, isWaitingOnDependency } from '@tsai-mind/core';
 import type { NodeKind, NodeStatus } from '@tsai-mind/core';
 import { useProject } from '../state/project';
-import { api } from '../api/client';
-import { activityActor, type Activity } from '../api/types';
+import { activityActor } from '../api/types';
 import { StatusPill } from '../components/ui';
-import { FIELD_LABEL, KIND_LABEL, STATUS_LABEL, copyText, fmtDate, relTime, valueLabel } from '../lib/util';
+import { FIELD_LABEL, KIND_LABEL, copyText, fmtDate, relTime, valueLabel } from '../lib/util';
 import { toast } from '../state/toast';
-
-const activityCache = new Map<string, Activity[]>();
+import { describeActivity, useNodeActivity } from './activity';
 
 export function Sidebar() {
   const projectId = useProject((s) => s.projectId);
@@ -63,31 +61,7 @@ export function Sidebar() {
     }
   }, [focusRequest]);
 
-  // activity for this node
-  const [activity, setActivity] = useState<Activity[]>([]);
-  useEffect(() => {
-    if (!projectId || !node) return;
-    let cancelled = false;
-    const nodeId = node.id;
-    const apply = (all: Activity[]) => {
-      if (cancelled) return;
-      setActivity(all.filter((a) => a.nodeId === nodeId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 10));
-    };
-    const cached = activityCache.get(projectId);
-    if (cached) apply(cached);
-    api
-      .getActivity(projectId)
-      .then((all) => {
-        activityCache.set(projectId, all);
-        apply(all);
-      })
-      .catch(() => {
-        if (!cached) apply([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, node?.id, node?.version, node?.lastNudgedAt]);
+  const activity = useNodeActivity(projectId, node?.id, node?.version, node?.lastNudgedAt);
 
   if (!node) {
     return (
@@ -495,70 +469,4 @@ export function Sidebar() {
       </section>
     </aside>
   );
-}
-
-function fieldChange(k: string, v: unknown): string {
-  const label = FIELD_LABEL[k] ?? k;
-  if (k === 'status') return `${label} → ${STATUS_LABEL[v as NodeStatus] ?? String(v)}`;
-  if (k === 'progress') return `${label} → ${String(v)}%`;
-  if (k === 'title') return `改标题为「${String(v)}」`;
-  if (k === 'description') return '改了描述';
-  if (k === 'dueDate' || k === 'startDate') return `${label} → ${v ? fmtDate(String(v)) : '空'}`;
-  if (k === 'lastNudgedAt') return '催办';
-  return `改了${label}`;
-}
-
-function describeActivity(a: Activity): string {
-  const p = a.payload ?? {};
-  const kind = a.kind;
-  switch (kind) {
-    case 'node_created':
-    case 'create_node':
-      return '创建了节点';
-    case 'deleted':
-    case 'delete_node':
-      return typeof p.count === 'number' && p.count > 1 ? `删除了节点（含 ${p.count - 1} 个子节点）` : '删除了节点';
-    case 'restored':
-    case 'restore_node':
-      return '恢复了节点';
-    case 'moved':
-    case 'move_node':
-      return '移动了节点';
-    case 'nudged':
-    case 'nudge':
-      return '催办';
-    case 'undone':
-      return '撤销了一步操作';
-    case 'note_added':
-    case 'note':
-      return `备注：${String(p.body ?? '')}`;
-    case 'change_proposed':
-      return `提议改${FIELD_LABEL[String(p.field)] ?? String(p.field)}${p.to !== undefined ? ` → ${fieldValue(String(p.field), p.to)}` : ''}`;
-    case 'change_decided':
-      return p.decision === 'approve' || p.decision === 'approved' ? '确认了变更' : p.decision ? '拒绝了变更' : '处理了变更';
-    case 'batch_applied':
-      return '应用了草案';
-    case 'dependency_added':
-      return '添加了前置任务';
-    case 'dependency_removed':
-      return '移除了前置任务';
-    case 'field_changed':
-    case 'update_node':
-    case 'update': {
-      const fields = p.fields as Record<string, { from: unknown; to: unknown }> | undefined;
-      if (fields) return Object.entries(fields).map(([k, v]) => fieldChange(k, v?.to)).join('，');
-      const patch = (p.patch ?? p) as Record<string, unknown>;
-      const keys = Object.keys(patch).filter((k) => k in FIELD_LABEL);
-      return keys.length ? keys.map((k) => fieldChange(k, patch[k])).join('，') : '更新了节点';
-    }
-    default:
-      return typeof p.message === 'string' ? p.message : kind;
-  }
-}
-
-function fieldValue(field: string, v: unknown): string {
-  if (v === null || v === undefined || v === '') return '空';
-  if (field === 'status') return STATUS_LABEL[v as NodeStatus] ?? String(v);
-  if (field === 'dueDate' || field === 'startDate') return fmtDate(String(v));
-  return String(v);
 }

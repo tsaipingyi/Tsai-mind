@@ -82,6 +82,25 @@ pnpm --filter @tsai-mind/server token:create
 - **导出**：`exportOutline(projectId)`（`src/cloud/export.ts`）在云端用 `downloads.save({ filename: '<项目名>.md', data })`，别的构建走 Blob 链接。
 - **冒烟测试**：`pnpm --filter @tsai-mind/web e2e:cloud`（先 `build:cloud`）。`e2e/cloud.mjs` 用 `page.addInitScript` 装一个假的 `window.claude`（`db` 用内存 Map + localStorage、`sample` 按脚本流式回答并调用一次 `update_node`、`downloads` 记录调用），覆盖首次种子、Tab 建节点后刷新仍在、Claude 流式 / 工具小片 / 待确认 / 确认生效、导出、跨设备快照、`db` 为 null 时的离线模式。截图 `e2e/out/cloud.png`、`cloud-chat.png`、`cloud-offline.png`。
 
+## 手机版（iPhone Safari / claude.ai iOS）
+
+同一个 React 应用，视口不超过 700px（`src/lib/useIsPhone.ts`，`matchMedia('(max-width: 700px)')` + `styles.css` 里的同名媒体查询）时切到 `design/mobile-v2/` 的简化布局；桌面（≥ 900px）不受影响。`index.html` 带 `viewport-fit=cover`、`apple-mobile-web-app-capable`、`apple-mobile-web-app-title` 和一个 data-URI 的 `apple-touch-icon`（橘色圆角方块加白色 T），所以 Safari「添加到主屏幕」是全屏 App。手机上用系统字体（PingFang SC 优先），日期等宽。
+
+| 路径 | 手机上的内容 |
+|---|---|
+| `/` | 今天（`pages/phone/Today.tsx`）：大标题 + 日期；最多一张待确认卡片（确认 / 拒绝），再多的收进「还有 n 项待确认 ›」（`/pending`，`pages/phone/Pending.tsx`）；一个清单「要做的 · n」= 逾期 + 今天 + 明天，逾期且有联系人负责的行尾有「催」（生成催办文案后走 `navigator.share`，没有分享面板就复制到剪贴板并弹提示）；「本周还有 n 项 ›」原地展开——`/api/today` 只到明天，这部分是拉每个项目的树、按 core 的叶子规则算明天之后 7 天内到期的 |
+| `/projects` | 项目列表行：名称 + `n 项逾期 · n 待确认`；「新建」是全屏表单 |
+| `/projects/:id` | 项目页（`pages/phone/Project.tsx`）：橘色 ‹、标题、`进度 44% · 10/10 上线 · 1 处延误`（最晚的里程碑；没有就「截止 m/d」）、右上角「问 Claude」；「列表 \| 导图」分段，默认列表（`editor/PhoneOutline.tsx`：52 高的行、▾ 折叠、状态点、待确认橘点、等宽日期）；导图是同一个 `MindMap` 组件的只读模式（`readOnly` + `onOpen`：单指平移、双指缩放、点节点进节点页）；右下角橘色「+」在当前选中（默认根）节点下新建并打开节点页、标题已聚焦。离开去节点页时不卸载项目，返回即时 |
+| `/projects/:id/node/:nodeId` | 节点页（`pages/phone/Node.tsx`）：路径 + ‹、可编辑的大标题、待办 / 进行中 / 受阻 / 完成 四个药丸（等待中在「更多」里）、一张卡片（截止：原生日期选择器；负责人：底部选择表；进度：6px 条 + 24px 滑块，子节点自动汇总时禁用）、这个节点的待确认卡片、通栏「催办」+「n 天前催过」、「更多：开始日、工时、依赖、说明、记录 ›」展开其余字段（开始日、工时、优先级、标签、说明、等待中、依赖与延误、活动记录含「经 Claude」、问 Claude）。所有改动走和桌面侧栏一样的 `useProject.updateNode`（Op + 确认规则），活动记录用 `editor/activity.ts` 里和侧栏共用的 `useNodeActivity` / `describeActivity`。桌面视口打开这个地址会跳回 `/projects/:id?node=` |
+| `/claude` | Claude 页（`pages/phone/Claude.tsx`）：标题「Claude ˅」点开历史（底部表单，可删除）、右上角「新对话」；项目范围药丸；用户消息 `#F3F3F3` 气泡（圆角 16/16/4/16），Claude 回复是纯文字，工具调用是「改了截止日 · 待确认」小标签（`editor/toolLabel.ts`，和 iPhone App 一样的中文动词映射）；44 高药丸输入框 + 橘色圆形发送键。项目页 / 节点页的「问 Claude」带 `?projectId=&prefill=&t=` 进来，开一个只看该项目的新对话。状态还是 `state/chat.ts` |
+| `/contacts`、`/settings` | 只做单列堆叠，底栏没有入口，走地址栏 |
+
+底部标签栏（`components/TabBar.tsx`）三项：今天、项目、Claude，49px + `env(safe-area-inset-bottom)`，1px 顶线，26px 描边图标（`components/icons.tsx`），当前项橘色。手机上没有侧栏、快捷键和拖拽换父。
+
+云端模式的挂钩（`src/lib/cloud.ts`）：用 `import.meta.glob` 按需读 `src/cloud/status.ts` 的 `useCloudStatus` 和 `src/cloud/mode.ts` 的 `isCloud`，没有这两个文件也能构建；云端构建里 `CloudStatusPill`（桌面在左栏账户区，手机在今天页日期旁）显示「连接云端… / 保存中… / 已保存 / 离线（本页数据不会保存）/ 错误信息」。`App.tsx` 监听 `window` 事件 `tsaimind:project-changed`（`detail.projectId`），是当前打开的项目就 `reload()`；今天页收到也会刷新。
+
+冒烟测试里有一个手机用例（390×844、`isMobile`、`hasTouch`，浏览器时钟固定在 2026-09-03）：今天页确认待确认、「催」复制文案、「本周」展开；项目列表 → 项目页（列表默认、折叠、导图切换、「+」发 `create_node` 并聚焦标题）；节点页（状态药丸发 `update_node`、负责人表单、「更多」展开依赖 / 延误 / 记录）；「问 Claude」→ Claude 页（模拟 SSE 渲染「改了进度 · 待确认」标签、历史表单）；联系人 / 设置堆叠；`?node=` 深链接跳节点页。截图：`phone-today.png`、`phone-project.png`、`phone-node.png`、`phone-claude.png`、`phone-settings.png`。
+
 ## 校验
 
 ```sh

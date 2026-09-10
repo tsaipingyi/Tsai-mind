@@ -11,12 +11,21 @@ import { ChatPanel } from '../editor/ChatPanel';
 import { CommandPalette, OwnerPicker, type PaletteActions } from '../editor/Popovers';
 import { useEditorShortcuts } from '../editor/useShortcuts';
 import { Avatar } from '../components/ui';
+import { exportOutline } from '../cloud';
 import { api, errorMessage } from '../api/client';
 import { toast } from '../state/toast';
 import { copyText } from '../lib/util';
 import { isDemo } from '../demo/flag';
+import { useIsPhone } from '../lib/useIsPhone';
+import { PhoneProjectPage } from './phone/Project';
 
 export function ProjectEditorPage() {
+  const phone = useIsPhone();
+  if (phone) return <PhoneProjectPage />;
+  return <DesktopProjectEditorPage />;
+}
+
+function DesktopProjectEditorPage() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const projectId = useProject((s) => s.projectId);
@@ -95,23 +104,7 @@ export function ProjectEditorPage() {
 
   const downloadOutline = useCallback(async () => {
     if (!projectId || !project) return;
-    try {
-      const text = await api.getOutline(projectId);
-      const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${project.name.replace(/[\\/:*?"<>|]+/g, '_') || 'outline'}.md`;
-      document.body.appendChild(a);
-      a.click();
-      // keep the anchor (and its download name) alive until the browser has started the download
-      setTimeout(() => {
-        a.remove();
-        URL.revokeObjectURL(url);
-      }, 2000);
-    } catch (e) {
-      toast(`下载失败：${errorMessage(e)}`, 'error');
-    }
+    await exportOutline(projectId, project.name);
   }, [projectId, project]);
 
   const openPrint = useCallback(() => {

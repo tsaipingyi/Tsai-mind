@@ -44,6 +44,10 @@ export const nodes: TNode[] = [
   n({ id: 'launch', parentId: 'root', rank: 's', title: '上线', kind: 'milestone', dueDate: '2026-10-10' }),
 ];
 
+/** An extra leaf due later this week (only the phone test adds it): 今天's「本周还有 n 项」row. */
+export const makeNode = n;
+export const weekNode = n({ id: 'track', parentId: 'dev', rank: 'p', title: '埋点接入', ownerId: 'c_wang', startDate: '2026-09-05', dueDate: '2026-09-09' });
+
 export const project: Project = { id: PROJECT_ID, name: '官网改版', rootNodeId: 'root', createdAt: NOW, archivedAt: null };
 
 export const pendingChanges: Change[] = [

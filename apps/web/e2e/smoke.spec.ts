@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import type { Op } from '@tsai-mind/core';
+import type { Op, TNode } from '@tsai-mind/core';
 import * as fx from './fixtures';
 
 const TOKEN = 'tm_test_token';
@@ -12,13 +12,15 @@ interface Recorded {
   projectGets: number;
   opsGets: number;
   chatPosts: Record<string, unknown>[];
+  /** `${changeId}:${decision}` for POST /api/changes/:id/(approve|reject) */
+  decisions: string[];
 }
 
 function recorder(): Recorded {
-  return { posted: [], undone: [], deps: [], mePatches: [], projectGets: 0, opsGets: 0, chatPosts: [] };
+  return { posted: [], undone: [], deps: [], mePatches: [], projectGets: 0, opsGets: 0, chatPosts: [], decisions: [] };
 }
 
-async function mockApi(page: Page, posted: Op[], undone: number[], rec: Recorded = recorder()) {
+async function mockApi(page: Page, posted: Op[], undone: number[], rec: Recorded = recorder(), opts: { extraNodes?: TNode[] } = {}) {
   let seq = fx.projectDetail.serverSeq;
   const addedDeps: { fromNode: string; toNode: string }[] = [];
   const sessions: (typeof fx.assistantSession)[] = [];
@@ -75,7 +77,7 @@ async function mockApi(page: Page, posted: Op[], undone: number[], rec: Recorded
     if (path === '/api/projects' && method === 'GET') return json(fx.projectRows);
     if (path === `/api/projects/${fx.PROJECT_ID}` && method === 'GET') {
       rec.projectGets++;
-      return json({ ...fx.projectDetail, dependencies: [...fx.projectDetail.dependencies, ...addedDeps] });
+      return json({ ...fx.projectDetail, nodes: [...fx.projectDetail.nodes, ...(opts.extraNodes ?? [])], dependencies: [...fx.projectDetail.dependencies, ...addedDeps] });
     }
     if (path === `/api/projects/${fx.PROJECT_ID}/activity`) {
       return json([
@@ -98,6 +100,11 @@ async function mockApi(page: Page, posted: Op[], undone: number[], rec: Recorded
     if (path === '/api/today') return json(fx.todayResponse);
     if (path === '/api/contacts') return json(fx.contacts);
     if (path === '/api/changes') return json(fx.todayResponse.pending);
+    if (/^\/api\/changes\/[^/]+\/(approve|reject)$/.test(path) && method === 'POST') {
+      const [, , , id, decision] = path.split('/');
+      rec.decisions.push(`${id}:${decision}`);
+      return json({ ok: true });
+    }
     if (/^\/api\/ops\/\d+\/undo$/.test(path) && method === 'POST') {
       undone.push(Number(path.split('/')[3]));
       return json({ results: [] });
@@ -455,4 +462,161 @@ test('settings page saves account, notifications and confirmation rules; lists t
   await expect(page.getByText('设置已保存')).toBeVisible();
   await expect(page.locator('.rail .name')).toHaveText('蔡先生');
   await page.screenshot({ path: 'e2e/out/settings.png', fullPage: true });
+});
+
+// ---------------------------------------------------------------------------
+// Phone layout (design/mobile-v2): iPhone-sized viewport, touch, the same mocked API.
+// ---------------------------------------------------------------------------
+test.describe('phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, permissions: ['clipboard-read', 'clipboard-write'] });
+
+  test('今天 → 项目 → node page → Claude on a phone', async ({ page }) => {
+    const rec = recorder();
+    await mockApi(page, rec.posted, rec.undone, rec, { extraNodes: [fx.weekNode] });
+    // no system share sheet in headless Chromium → 催 falls back to the clipboard + toast
+    await page.addInitScript(() => {
+      try {
+        Object.defineProperty(navigator, 'share', { value: undefined, configurable: true });
+      } catch {
+        /* ignore */
+      }
+    });
+    // the fixtures are dated around 2026-09-03; pin the browser clock so 逾期 n 天 / 本周 are stable
+    await page.clock.setFixedTime(new Date('2026-09-03T10:00:00'));
+    await login(page);
+
+    // shell: bottom tab bar instead of the rail
+    await expect(page.getByTestId('tabbar')).toBeVisible();
+    await expect(page.locator('.rail')).toHaveCount(0);
+    const today = page.getByTestId('phone-today');
+    await expect(today).toBeVisible();
+    await expect(today.getByTestId('today-date')).toHaveText('9月3日 周四');
+    // one pending card + the single 要做的 list
+    const card = today.getByTestId('change-ch1');
+    await expect(card).toContainText('Claude 提议 · 接口联调');
+    await expect(card).toContainText('截止日 8/30 → 10/5');
+    await expect(today.getByTestId('todo-label')).toHaveText('要做的 · 1');
+    const apiRow = today.getByTestId('task-api');
+    await expect(apiRow).toContainText('陈小明 · 逾期 4 天');
+    await expect(apiRow.locator('.ph-task-date')).toHaveClass(/red/);
+    // 本周还有 n 项 expands inline (computed from the project tree: 埋点接入 due 9/9)
+    await expect(today.getByTestId('more-week')).toHaveText(/本周还有 1 项/);
+    await page.screenshot({ path: 'e2e/out/phone-today.png' });
+    await today.getByTestId('more-week').click();
+    await expect(today.getByTestId('task-track')).toContainText('王芳 · 周三');
+    // 催 → nudge text copied and shown
+    await apiRow.getByTestId('nudge-api').click();
+    await expect(page.locator('.toast')).toContainText('已复制到剪贴板');
+    await expect(page.locator('.toast')).toContainText('小明，关于「接口联调」');
+    // approve the pending change
+    await card.getByTestId('approve-ch1').click();
+    await expect.poll(() => rec.decisions).toEqual(['ch1:approve']);
+    await expect(page.getByText('已确认', { exact: true })).toBeVisible();
+
+    // 项目 tab → list → project page (列表 default)
+    await page.getByTestId('tab-项目').click();
+    await expect(page).toHaveURL(/\/projects$/);
+    const row = page.getByTestId(`project-${fx.PROJECT_ID}`);
+    await expect(row).toContainText('官网改版');
+    await expect(row).toContainText('1 项逾期 · 1 待确认 · 1 处延误');
+    await row.click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${fx.PROJECT_ID}$`));
+    const project = page.getByTestId('phone-project');
+    await expect(project.getByTestId('view-outline')).toHaveAttribute('aria-selected', 'true');
+    await expect(project.getByTestId('project-meta')).toContainText('10/10 上线 · 1 处延误');
+    const outline = project.getByTestId('phone-outline');
+    await expect(outline.locator('.ph-row')).toHaveCount(8); // root's children, all expanded (+ 埋点接入)
+    await expect(outline.getByTestId('outline-api').locator('.ph-row-date')).toHaveClass(/red/);
+    await expect(outline.getByTestId('outline-api').locator('.ph-dot.pend')).toBeVisible();
+    await expect(outline.getByTestId('outline-design').locator('.ph-row-title')).toHaveClass(/parent/);
+    await page.screenshot({ path: 'e2e/out/phone-project.png' });
+    // collapse 设计 → its two children disappear
+    await outline.getByTestId('outline-design').getByRole('button', { name: '收起' }).click();
+    await expect(outline.locator('.ph-row')).toHaveCount(6);
+    // 导图 toggle shows the read-only mind map
+    await project.getByTestId('view-map').click();
+    await expect(page.locator('.mindmap')).toBeVisible();
+    await expect(page.locator('.mm-node')).toHaveCount(7); // 9 nodes, 设计 still collapsed
+    await expect(page.locator('.mm-hint')).toHaveCount(0);
+    await project.getByTestId('view-outline').click();
+    // + adds a child under the root and opens the node page with the title focused
+    await project.getByTestId('add-node').click();
+    await expect(page).toHaveURL(new RegExp(`/projects/${fx.PROJECT_ID}/node/[0-9a-f-]{36}\\?focus=1$`));
+    await expect.poll(() => rec.posted.filter((o) => o.type === 'create_node').length).toBe(1);
+    const created = rec.posted.find((o) => o.type === 'create_node')!;
+    expect(created.type === 'create_node' && created.node.parentId).toBe('root');
+    const titleInput = page.getByTestId('node-title');
+    await expect(titleInput).toBeFocused();
+    await titleInput.fill('埋点复核');
+    await titleInput.press('Enter');
+    await expect.poll(() => rec.posted.filter((o) => o.type === 'update_node' && o.patch.title === '埋点复核').length).toBe(1);
+    await page.getByTestId('node-back').click();
+    await expect(outline.locator('.ph-row')).toHaveCount(7);
+    await expect(outline).toContainText('埋点复核');
+
+    // node page for 接口联调
+    await page.goto(`/projects/${fx.PROJECT_ID}/node/api`);
+    const node = page.getByTestId('phone-node');
+    await expect(node.getByTestId('node-title')).toHaveValue('接口联调');
+    await expect(node.locator('.ph-crumb')).toHaveText('官网改版 / 开发');
+    await expect(node.getByTestId('status-blocked')).toHaveAttribute('aria-pressed', 'true');
+    await expect(node.getByTestId('due-row')).toContainText('8/30 · 逾期 4 天');
+    await expect(node.getByTestId('owner-row')).toContainText('陈小明');
+    await expect(node.getByTestId('progress-value')).toHaveText('10%');
+    await expect(node.getByTestId('change-ch1')).toContainText('截止日 8/30 → 10/5');
+    await expect(node.getByTestId('nudge-note')).toHaveText('还没催过');
+    await page.screenshot({ path: 'e2e/out/phone-node.png' });
+    await node.getByTestId('status-in_progress').click();
+    await expect.poll(() => rec.posted.filter((o) => o.type === 'update_node' && o.patch.status === 'in_progress').length).toBe(1);
+    await expect(node.getByTestId('status-in_progress')).toHaveAttribute('aria-pressed', 'true');
+    // owner sheet → 我
+    await node.getByTestId('owner-row').click();
+    await expect(page.getByTestId('owner-sheet')).toBeVisible();
+    await page.getByTestId('owner-me').click();
+    await expect.poll(() => rec.posted.filter((o) => o.type === 'update_node' && o.patch.ownerId === null).length).toBe(1);
+    await expect(node.getByTestId('owner-row')).toContainText('我');
+    // 更多 expands the rest
+    await node.getByTestId('more-toggle').click();
+    const more = node.getByTestId('more-body');
+    await expect(more).toBeVisible();
+    await expect(more.getByTestId('start-row')).toContainText('9/15');
+    await expect(more.getByTestId('dep-waiting')).toHaveText('等待中：前置任务未完成');
+    await expect(more.getByTestId('dep-slip-fe')).toContainText('延误 9 天');
+    await expect(more.getByTestId('dep-fe')).toContainText('前端页面');
+    await expect(more.locator('.via')).toHaveText('经 Claude');
+
+    // Claude: 问 Claude from the project scopes a new conversation; the mocked SSE renders a tool chip
+    await page.getByTestId('node-back').click();
+    await project.getByTestId('ask-claude').click();
+    await expect(page).toHaveURL(/\/claude\?projectId=p1/);
+    const claude = page.getByTestId('phone-claude');
+    await expect(claude.getByTestId('chat-scope')).toHaveText('官网改版');
+    await claude.getByTestId('chat-input').fill('把接口联调的进度改成 30%');
+    await claude.getByTestId('chat-send').click();
+    await expect.poll(() => rec.chatPosts.length).toBe(1);
+    expect(rec.chatPosts[0]!.projectId).toBe(fx.PROJECT_ID);
+    await expect(claude.locator('.ph-msg.mine')).toHaveText('把接口联调的进度改成 30%');
+    const chip = claude.getByTestId('tool-chip');
+    await expect(chip).toHaveCount(1);
+    await expect(chip).toHaveText('改了进度 · 待确认');
+    await expect(chip).toHaveClass(/pending/);
+    await expect(claude.locator('.ph-msg-text strong')).toHaveText('接口联调');
+    await expect(page.getByTestId('tab-Claude')).toHaveClass(/active/);
+    await page.screenshot({ path: 'e2e/out/phone-claude.png' });
+    // history sheet lists the (server-titled) conversation
+    await claude.getByTestId('chat-history').click();
+    await expect(page.getByTestId('history-sheet')).toContainText('改接口联调进度');
+
+    // contacts / settings only stack into one column on the phone
+    await page.goto('/contacts');
+    await expect(page.getByText('陈小明')).toBeVisible();
+    await expect(page.getByTestId('tabbar')).toBeVisible();
+    await page.goto('/settings');
+    await expect(page.getByTestId('settings').getByLabel('名字')).toHaveValue('蔡');
+    await page.screenshot({ path: 'e2e/out/phone-settings.png' });
+    // the desktop-only URLs fold back into the phone pages
+    await page.goto(`/projects/${fx.PROJECT_ID}?node=fe`);
+    await expect(page).toHaveURL(new RegExp(`/projects/${fx.PROJECT_ID}/node/fe$`));
+    await expect(page.getByTestId('node-title')).toHaveValue('前端页面');
+  });
 });

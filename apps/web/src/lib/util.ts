@@ -152,3 +152,23 @@ export const OUTLINE_PLACEHOLDER = `- 官网改版 9/1–10/10
 
 缩进代表父子，@名字 指负责人（不写就是我），日期用 起–止 或单个日期，
 状态词 todo/in_progress/blocked/waiting/done 和百分比可选，◆ 表示里程碑，← 标题 表示前置任务。`;
+
+/** 「周五」for a date. */
+export function weekdayLabel(iso: ISODate): string {
+  const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
+  return `周${'日一二三四五六'[new Date(y, m - 1, d).getDay()]}`;
+}
+
+/** 「9月4日 周五」— the date beside the 今天 title on the phone. */
+export function longDate(iso: ISODate): string {
+  const [, m, d] = iso.split('-').map(Number) as [number, number, number];
+  return `${m}月${d}日 ${weekdayLabel(iso)}`;
+}
+
+/** Whole days since a timestamp (0 = today); null when absent or unparsable. */
+export function daysAgo(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.max(0, daysBetween(toISODate(d), today()));
+}

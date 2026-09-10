@@ -104,7 +104,7 @@ export function PendingPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function BatchCard({ batch }: { batch: PlanBatch }) {
+export function BatchCard({ batch }: { batch: PlanBatch }) {
   const store = useProject((s) => s.store);
   const contacts = useProject((s) => s.contacts);
   const applyBatch = useProject((s) => s.applyBatch);

@@ -15,7 +15,11 @@ interface View {
 const MIN_K = 0.25;
 const MAX_K = 2.5;
 
-export function MindMap() {
+/**
+ * `readOnly` (the phone 导图): touch pan / pinch-zoom, no re-parent drag or inline editing;
+ * tapping a node selects it and calls `onOpen` (the node page). Without these props the desktop behaviour is unchanged.
+ */
+export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) => void; readOnly?: boolean } = {}) {
   const store = useProject((s) => s.store);
   const rev = useProject((s) => s.rev);
   const derived = useProject((s) => s.derived);
@@ -123,6 +127,81 @@ export function MindMap() {
     return () => el.removeEventListener('wheel', onWheel);
   }, [onWheel]);
 
+  // ---- touch: one finger pans, two pinch-zoom, a tap selects (and opens the node page when `onOpen` is set) ----
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let mode: 'pan' | 'pinch' | null = null;
+    let moved = false;
+    let start = { x: 0, y: 0, vx: 0, vy: 0 };
+    let pinch = { d: 1, k: 1, wx: 0, wy: 0 };
+    let target: HTMLElement | null = null;
+    const mid = (a: Touch, b: Touch) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+    const onStart = (e: TouchEvent) => {
+      const v = viewRef.current;
+      if (e.touches.length === 1) {
+        const t = e.touches[0]!;
+        mode = 'pan';
+        moved = false;
+        start = { x: t.clientX, y: t.clientY, vx: v.x, vy: v.y };
+        target = (e.target as HTMLElement).closest('.mm-node, .mm-controls, .toggle') as HTMLElement | null;
+      } else if (e.touches.length === 2) {
+        const rect = el.getBoundingClientRect();
+        const m = mid(e.touches[0]!, e.touches[1]!);
+        mode = 'pinch';
+        moved = true;
+        pinch = { d: dist(e.touches[0]!, e.touches[1]!), k: v.k, wx: (m.x - rect.left - v.x) / v.k, wy: (m.y - rect.top - v.y) / v.k };
+      }
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!mode) return;
+      if (target?.classList.contains('mm-controls')) return;
+      e.preventDefault();
+      if (mode === 'pan' && e.touches.length === 1) {
+        const t = e.touches[0]!;
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+        if (moved) setView({ ...viewRef.current, x: start.vx + dx, y: start.vy + dy });
+      } else if (mode === 'pinch' && e.touches.length === 2) {
+        const rect = el.getBoundingClientRect();
+        const m = mid(e.touches[0]!, e.touches[1]!);
+        const k = Math.max(MIN_K, Math.min(MAX_K, (pinch.k * dist(e.touches[0]!, e.touches[1]!)) / pinch.d));
+        setView({ k, x: m.x - rect.left - pinch.wx * k, y: m.y - rect.top - pinch.wy * k });
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (mode === 'pan' && !moved) {
+        // a tap: buttons (toggle / controls) keep their synthesized click, nodes and the background handle it here
+        if (!target || target.classList.contains('mm-node')) {
+          e.preventDefault();
+          const id = target?.dataset.nodeId;
+          if (id) {
+            select(id);
+            onOpen?.(id);
+          } else select(null);
+        }
+      } else if (moved) e.preventDefault();
+      if (e.touches.length === 0) mode = null;
+      else if (e.touches.length === 1) {
+        const t = e.touches[0]!;
+        const v = viewRef.current;
+        mode = 'pan';
+        moved = true;
+        start = { x: t.clientX, y: t.clientY, vx: v.x, vy: v.y };
+      }
+    };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+    };
+  }, [select, onOpen]);
+
   const zoomBy = (factor: number) => {
     const el = containerRef.current;
     if (!el) return;
@@ -164,7 +243,7 @@ export function MindMap() {
     e.stopPropagation();
     if (editingId === ln.id) return;
     select(ln.id);
-    if (ln.parentId === null) return;
+    if (ln.parentId === null || readOnly) return;
     const start = { x: e.clientX, y: e.clientY };
     let dragging = false;
     const descendants = new Set(store.descendants(ln.id).map((n) => n.id));
@@ -248,9 +327,10 @@ export function MindMap() {
               data-status={status}
               style={{ left: ln.x, top: ln.y }}
               onMouseDown={(e) => onNodeMouseDown(e, ln)}
+              onClick={readOnly && onOpen ? () => onOpen(id) : undefined}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                setEditing(id);
+                if (!readOnly) setEditing(id);
               }}
               title={n.title}
             >
@@ -302,7 +382,7 @@ export function MindMap() {
         })}
       </div>
       {!root && <div className="mm-hint">这个项目还没有节点。</div>}
-      {root && <div className="mm-hint">拖动背景平移 · Ctrl/⌘ + 滚轮缩放 · 拖动节点到另一个节点上可移动</div>}
+      {root && !readOnly && <div className="mm-hint">拖动背景平移 · Ctrl/⌘ + 滚轮缩放 · 拖动节点到另一个节点上可移动</div>}
       <div className="mm-controls">
         <button onClick={() => zoomBy(1 / 1.2)} title="缩小">
           −

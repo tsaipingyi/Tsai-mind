@@ -3,14 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { api, errorMessage } from '../api/client';
 import type { ProjectRow } from '../api/types';
 import { Dialog } from '../components/ui';
+import { HeaderLink, LargeTitle, Sheet } from '../components/phone';
 import { toast } from '../state/toast';
 import { OUTLINE_PLACEHOLDER } from '../lib/util';
+import { useIsPhone } from '../lib/useIsPhone';
 
 export function ProjectsPage() {
   const [rows, setRows] = useState<ProjectRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const nav = useNavigate();
+  const phone = useIsPhone();
 
   const load = useCallback(async () => {
     try {
@@ -25,6 +28,41 @@ export function ProjectsPage() {
   }, [load]);
 
   const active = (rows ?? []).filter((r) => !r.archivedAt);
+  const onCreated = (id: string) => {
+    setCreating(false);
+    nav(`/projects/${id}`);
+  };
+
+  if (phone) {
+    return (
+      <div className="ph-page ph-projects" data-testid="phone-projects">
+        <LargeTitle title="项目" right={<HeaderLink title="新建" tone="orange" onClick={() => setCreating(true)} testId="new-project" />} />
+        {err && <div className="red ph-small">{err}</div>}
+        {rows && !active.length && <div className="ph-empty">还没有项目。点右上角「新建」，空白开始或贴一段大纲。</div>}
+        {active.length > 0 && (
+          <div className="ph-project-list">
+            {active.map((p) => {
+              const parts: string[] = [];
+              if (p.overdueCount) parts.push(`${p.overdueCount} 项逾期`);
+              if (p.pendingCount) parts.push(`${p.pendingCount} 待确认`);
+              if (p.slipCount) parts.push(`${p.slipCount} 处延误`);
+              return (
+                <button key={p.id} type="button" className="ph-project-row" onClick={() => nav(`/projects/${p.id}`)} data-testid={`project-${p.id}`}>
+                  <span className="ph-project-name ellipsis">{p.name}</span>
+                  <span className={`ph-project-sub${p.overdueCount ? ' red' : ''}`}>{parts.length ? parts.join(' · ') : '没有逾期'}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {creating && (
+          <Sheet full title="新建项目" onClose={() => setCreating(false)} testId="new-project-sheet">
+            <NewProjectForm phone onClose={() => setCreating(false)} onCreated={onCreated} />
+          </Sheet>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="page narrow">
@@ -68,19 +106,16 @@ export function ProjectsPage() {
         </table>
       )}
       {creating && (
-        <NewProjectDialog
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            setCreating(false);
-            nav(`/projects/${id}`);
-          }}
-        />
+        <Dialog title="新建项目" onClose={() => setCreating(false)} width={620}>
+          <NewProjectForm onClose={() => setCreating(false)} onCreated={onCreated} />
+        </Dialog>
       )}
     </div>
   );
 }
 
-function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+/** The 新建项目 form (name + optional outline); the desktop wraps it in a Dialog, the phone in a full-screen Sheet. */
+function NewProjectForm({ onClose, onCreated, phone }: { onClose: () => void; onCreated: (id: string) => void; phone?: boolean }) {
   const [name, setName] = useState('');
   const [outline, setOutline] = useState('');
   const [busy, setBusy] = useState(false);
@@ -104,31 +139,31 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
   };
 
   return (
-    <Dialog title="新建项目" onClose={onClose} width={620}>
-      <form onSubmit={submit}>
-        <label className="field">
-          <span>名称</span>
-          <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="官网改版" />
-        </label>
-        <label className="field">
-          <span>大纲（可选，留空则从一个根节点开始）</span>
-          <textarea
-            className="textarea mono"
-            style={{ minHeight: 220, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}
-            value={outline}
-            onChange={(e) => setOutline(e.target.value)}
-            placeholder={OUTLINE_PLACEHOLDER}
-          />
-        </label>
-        <div className="foot">
+    <form onSubmit={submit} className={phone ? 'ph-form' : undefined}>
+      <label className="field">
+        <span>名称</span>
+        <input className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="官网改版" />
+      </label>
+      <label className="field">
+        <span>大纲（可选，留空则从一个根节点开始）</span>
+        <textarea
+          className="textarea mono"
+          style={{ minHeight: phone ? 260 : 220, fontFamily: 'var(--font-mono)', fontSize: phone ? 13 : 12.5 }}
+          value={outline}
+          onChange={(e) => setOutline(e.target.value)}
+          placeholder={OUTLINE_PLACEHOLDER}
+        />
+      </label>
+      <div className="foot">
+        {!phone && (
           <button type="button" className="btn" onClick={onClose}>
             取消
           </button>
-          <button type="submit" className="btn primary" disabled={busy || !name.trim()}>
-            {busy ? '创建中…' : '创建'}
-          </button>
-        </div>
-      </form>
-    </Dialog>
+        )}
+        <button type="submit" className={phone ? 'ph-btn primary grow' : 'btn primary'} disabled={busy || !name.trim()} data-testid="create-project">
+          {busy ? '创建中…' : '创建'}
+        </button>
+      </div>
+    </form>
   );
 }

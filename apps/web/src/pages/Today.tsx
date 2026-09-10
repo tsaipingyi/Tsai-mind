@@ -6,8 +6,16 @@ import { todaySections, type PendingChange, type TodayEntry, type TodayResponse 
 import { toast } from '../state/toast';
 import { FIELD_LABEL, contactName, copyText, fmtDate, valueLabel } from '../lib/util';
 import { Avatar } from '../components/ui';
+import { useIsPhone } from '../lib/useIsPhone';
+import { PhoneTodayPage } from './phone/Today';
 
 export function TodayPage() {
+  const phone = useIsPhone();
+  if (phone) return <PhoneTodayPage />;
+  return <DesktopTodayPage />;
+}
+
+function DesktopTodayPage() {
   const [data, setData] = useState<TodayResponse | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [err, setErr] = useState<string | null>(null);
