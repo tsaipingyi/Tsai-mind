@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/web build:cloud",
+  "buildCommand": "pnpm run build",
   "outputDirectory": "apps/web/dist-cloud",
   "framework": null,
   "headers": [
