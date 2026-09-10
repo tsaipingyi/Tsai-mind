@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type { TNode, TreeStore } from '@tsai-mind/core';
 import { useProject } from '../state/project';
 import { isTypingTarget } from '../lib/util';
+import { rootSides, type Side } from './layout';
 
 export function visibleOrder(store: TreeStore, collapsed: Set<string>): TNode[] {
   const out: TNode[] = [];
@@ -12,6 +13,14 @@ export function visibleOrder(store: TreeStore, collapsed: Set<string>): TNode[] 
   const root = store.root();
   if (root) walk(root);
   return out;
+}
+
+/** the side of the root a node's branch is drawn on (the root itself counts as 'right') */
+function sideOf(store: TreeStore, n: TNode): Side {
+  if (n.parentId === null) return 'right';
+  const chain = store.ancestors(n.id); // parent … root
+  const branch = chain.length >= 2 ? chain[chain.length - 2]! : n;
+  return rootSides(store).get(branch.id) ?? 'right';
 }
 
 export interface ShortcutHandlers {
@@ -94,13 +103,15 @@ export function useEditorShortcuts(h: ShortcutHandlers) {
           if (target) st.select(target.id);
           return;
         }
-        case 'ArrowLeft': {
-          e.preventDefault();
-          if (sel.parentId) st.select(sel.parentId);
-          return;
-        }
+        case 'ArrowLeft':
         case 'ArrowRight': {
           e.preventDefault();
+          // the map grows both ways: on a left-hand branch the keys are mirrored
+          const outward = (e.key === 'ArrowRight') !== (sideOf(st.store, sel) === 'left');
+          if (!outward) {
+            if (sel.parentId) st.select(sel.parentId);
+            return;
+          }
           const kids = st.store.children(sel.id);
           if (!kids.length) return;
           if (st.collapsed.has(sel.id)) st.toggleCollapse(sel.id);

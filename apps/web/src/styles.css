@@ -834,6 +834,10 @@ label.field > span,
   padding: 0;
   line-height: 1;
 }
+.mm-node.left .toggle {
+  right: auto;
+  left: -10px;
+}
 .mm-node .toggle:hover {
   border-color: var(--orange);
   color: var(--orange-deep);

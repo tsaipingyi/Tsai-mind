@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isOverdue } from '@tsai-mind/core';
 import { nodeMatches, useProject } from '../state/project';
 import { computeLayout, connectorPath, type LayoutNode } from './layout';
@@ -69,6 +69,23 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
       fit();
     }
   }, [projectId, layout.width, fit]);
+
+  // the map grows both ways, so a change on the left shifts every world coordinate: keep the root
+  // where it is on screen across layout changes (the initial fit of a project still wins)
+  const rootPos = useRef<{ projectId: string | null; x: number; y: number } | null>(null);
+  useLayoutEffect(() => {
+    const r = layout.order.length ? layout.nodes.get(layout.order[0]!) : undefined;
+    if (!r) {
+      rootPos.current = null;
+      return;
+    }
+    const prev = rootPos.current;
+    rootPos.current = { projectId, x: r.x, y: r.y };
+    if (!prev || prev.projectId !== projectId) return;
+    const dx = r.x - prev.x;
+    const dy = r.y - prev.y;
+    if (dx || dy) setView((v) => ({ ...v, x: v.x - dx * v.k, y: v.y - dy * v.k }));
+  }, [layout, projectId]);
 
   // ancestors chain of the selection for the orange connectors / branch borders
   const chain = useMemo(() => {
@@ -306,6 +323,7 @@ export function MindMap({ onOpen, readOnly = false }: { onOpen?: (id: string) =>
           const cls = [
             'mm-node',
             ln.depth === 0 ? 'root' : '',
+            ln.depth > 0 && ln.side === 'left' ? 'left' : '',
             !isSel && chain.has(id) ? 'branch' : '',
             isSel ? 'selected' : '',
             status === 'blocked' ? 'blocked' : '',
