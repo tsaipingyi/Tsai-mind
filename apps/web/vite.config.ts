@@ -13,7 +13,11 @@ import { cloudConfig } from './vite.cloud.config';
  * the repository root as well — whichever Root Directory / Output Directory the project uses,
  * a `dist-cloud` folder exists afterwards.
  */
-const onVercel = !!process.env.VERCEL;
+// Vercel exposes VERCEL/VERCEL_ENV only when "system environment variables" are enabled; CI is
+// always set there. TSAI_MIND_CLOUD=1 forces the cloud build anywhere; TSAI_MIND_LOCAL_BUILD=1 forces
+// the normal one.
+const env = process.env;
+const onVercel = !env.TSAI_MIND_LOCAL_BUILD && !!(env.TSAI_MIND_CLOUD || env.VERCEL || env.VERCEL_ENV || env.VERCEL_URL || env.NOW_BUILDER || env.CI);
 
 function ensureCoreBuilt(): void {
   const dist = resolve(__dirname, '../../packages/core/dist/index.js');
