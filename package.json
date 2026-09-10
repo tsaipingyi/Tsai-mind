@@ -7,13 +7,13 @@
     "node": "22.x"
   },
   "scripts": {
-    "build": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/web build:cloud",
+    "build": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/web build:cloud && rm -rf dist-cloud && cp -r apps/web/dist-cloud dist-cloud",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "dev:server": "pnpm --filter @tsai-mind/server dev",
     "dev:web": "pnpm --filter @tsai-mind/web dev",
     "build:all": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/server build && pnpm --filter @tsai-mind/web build",
-    "vercel-build": "pnpm run build && rm -rf dist-cloud && cp -r apps/web/dist-cloud dist-cloud"
+    "vercel-build": "pnpm run build"
   },
   "devDependencies": {
     "typescript": "^5.7.0"
