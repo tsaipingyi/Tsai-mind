@@ -26,10 +26,13 @@ function copyToRepoRoot(): Plugin {
     name: 'tsai-mind-copy-dist-cloud',
     closeBundle() {
       const from = resolve(__dirname, 'dist-cloud');
-      const to = resolve(__dirname, '../../dist-cloud');
       if (!existsSync(from)) return;
-      rmSync(to, { recursive: true, force: true });
-      cpSync(from, to, { recursive: true });
+      // leave the same bundle everywhere Vercel might look: apps/web/dist, apps/web/dist-cloud, <repo>/dist-cloud
+      for (const to of [resolve(__dirname, '../../dist-cloud'), resolve(__dirname, 'dist')]) {
+        rmSync(to, { recursive: true, force: true });
+        cpSync(from, to, { recursive: true });
+      }
+      console.log('[tsai-mind] Vercel build: cloud bundle written to dist, dist-cloud and <repo>/dist-cloud');
     },
   };
 }
@@ -46,6 +49,9 @@ const local: UserConfig = {
   build: { sourcemap: true },
 };
 
-if (onVercel) ensureCoreBuilt();
+if (onVercel) {
+  console.log('[tsai-mind] VERCEL detected: building the cloud bundle');
+  ensureCoreBuilt();
+}
 
 export default defineConfig(onVercel ? { ...cloudConfig, plugins: [...(cloudConfig.plugins ?? []), copyToRepoRoot()] } : local);
