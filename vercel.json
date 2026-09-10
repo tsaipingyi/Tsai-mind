@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm run build",
-  "outputDirectory": "apps/web/dist-cloud",
+  "buildCommand": "pnpm run vercel-build",
+  "outputDirectory": "dist-cloud",
   "framework": null,
   "headers": [
     {

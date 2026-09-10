@@ -12,7 +12,8 @@
     "test": "pnpm -r test",
     "dev:server": "pnpm --filter @tsai-mind/server dev",
     "dev:web": "pnpm --filter @tsai-mind/web dev",
-    "build:all": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/server build && pnpm --filter @tsai-mind/web build"
+    "build:all": "pnpm --filter @tsai-mind/core build && pnpm --filter @tsai-mind/server build && pnpm --filter @tsai-mind/web build",
+    "vercel-build": "pnpm run build && rm -rf dist-cloud && cp -r apps/web/dist-cloud dist-cloud"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

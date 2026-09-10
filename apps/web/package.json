@@ -11,7 +11,8 @@
     "preview": "vite preview --port 4173 --strictPort",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "e2e": "playwright test",
-    "e2e:cloud": "node e2e/cloud.mjs"
+    "e2e:cloud": "node e2e/cloud.mjs",
+    "vercel-build": "cd ../.. && pnpm --filter @tsai-mind/core build && cd apps/web && pnpm run build:cloud"
   },
   "dependencies": {
     "@tsai-mind/core": "workspace:*",
