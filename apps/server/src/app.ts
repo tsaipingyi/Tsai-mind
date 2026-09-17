@@ -91,6 +91,7 @@ export async function buildApp(ctx: Ctx, opts: { logger?: boolean | object } = {
             nudgeTemplate: z.string().nullable().optional(),
             keyFields: z.array(keyField).optional(),
             requireConfirmation: z.boolean().optional(),
+            pageLock: z.object({ salt: z.string().min(1), hash: z.string().min(1), iter: z.number().int().positive() }).nullable().optional(),
           })
           .optional(),
       }),

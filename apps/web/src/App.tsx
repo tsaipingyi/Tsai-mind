@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Toasts } from './components/ui';
@@ -20,6 +20,9 @@ import { DEMO_BANNER, DEMO_TOKEN, isDemo } from './demo/flag';
 import { isCloud } from './cloud/mode';
 import { useIsPhone } from './lib/useIsPhone';
 import { PROJECT_CHANGED_EVENT } from './lib/cloud';
+import { LockScreen } from './components/LockScreen';
+import { isUnlocked } from './lib/lock';
+import { useLock } from './state/lock';
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const token = useSession((s) => s.token);
@@ -55,6 +58,10 @@ function PendingRoute() {
 
 export function App() {
   const token = useSession((s) => s.token);
+  const account = useSession((s) => s.account);
+  const checking = useSession((s) => s.checking);
+  const lockRev = useLock((s) => s.rev);
+  const [, rerender] = useState(0);
   const bootstrap = useSession((s) => s.bootstrap);
   const logout = useSession((s) => s.logout);
   const login = useSession((s) => s.login);
@@ -124,6 +131,13 @@ export function App() {
       <Toasts />
     </>
   );
+  // page lock: nothing is shown until the account (and with it the lock) is known and unlocked
+  const lock = account?.settings?.pageLock ?? null;
+  if (token && checking && !account) return <div className="page faint">加载中…</div>;
+  if (lock && !isUnlocked(lock)) {
+    void lockRev;
+    return <LockScreen lock={lock} onUnlock={() => rerender((n) => n + 1)} />;
+  }
   if (!isDemo || isCloud) return body;
   return (
     <div className="demo-shell">

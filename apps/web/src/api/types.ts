@@ -8,6 +8,8 @@ export interface NotificationToggles {
 }
 
 export interface AccountSettings {
+  /** page lock (salted PBKDF2 hash of the password); null / absent = no lock */
+  pageLock?: { salt: string; hash: string; iter: number } | null;
   requireConfirmation?: boolean;
   keyFields?: KeyField[];
   nudgeTemplate?: string;

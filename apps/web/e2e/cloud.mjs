@@ -417,6 +417,48 @@ try {
   assert(true, 'local: Claude (sample) still answers');
   await page.screenshot({ path: 'e2e/out/cloud-offline.png' });
 
+  // ---- page lock: set a password in 设置, reload → the lock screen, wrong then right password ----
+  await page.getByRole('link', { name: '设置' }).click();
+  await page.getByLabel('页面密码', { exact: true }).fill('测试密码 1');
+  await page.getByLabel('再输一次页面密码').fill('测试密码 1');
+  await page.getByRole('button', { name: '开启页面密码' }).click();
+  await page.getByRole('button', { name: '更改密码' }).waitFor();
+  assert(true, 'lock: password enabled in settings');
+  await page.waitForTimeout(800);
+  // a reload keeps the tab unlocked (sessionStorage); a new tab is a fresh open and must ask
+  await page.reload();
+  await waitState(page, 'local');
+  assert((await page.getByTestId('lock-screen').count()) === 0, 'lock: the same tab stays unlocked across a reload');
+  await page.close();
+  page = await context.newPage();
+  attach(page);
+  await page.goto(URL_);
+  await page.getByTestId('lock-screen').waitFor();
+  assert((await page.locator('.mm-node, [data-testid="settings"]').count()) === 0, 'lock: nothing else is rendered behind the lock screen');
+  await page.getByLabel('页面密码').fill('错的');
+  await page.getByRole('button', { name: '解锁' }).click();
+  await page.getByText('密码不对').waitFor();
+  assert(true, 'lock: a wrong password is refused');
+  await page.getByLabel('页面密码').fill('测试密码 1');
+  await page.getByRole('button', { name: '解锁' }).click();
+  await page.getByTestId('lock-screen').waitFor({ state: 'detached' });
+  await waitState(page, 'local');
+  assert((await page.getByTestId('lock-screen').count()) === 0, 'lock: the right password opens the page');
+  await page.getByRole('button', { name: '锁定' }).click();
+  await page.getByTestId('lock-screen').waitFor();
+  assert(true, 'lock: 锁定 asks for the password again');
+  await page.getByLabel('页面密码').fill('测试密码 1');
+  await page.getByRole('button', { name: '解锁' }).click();
+  await page.getByTestId('lock-screen').waitFor({ state: 'detached' });
+  await page.getByRole('link', { name: '设置' }).click();
+  await page.getByLabel('当前密码').fill('测试密码 1');
+  await page.getByRole('button', { name: '取消密码' }).click();
+  await page.getByRole('button', { name: '开启页面密码' }).waitFor();
+  await page.waitForTimeout(800);
+  await page.reload();
+  await waitState(page, 'local');
+  assert((await page.getByTestId('lock-screen').count()) === 0, 'lock: after 取消密码 the page opens without asking');
+
   assert(consoleErrors.length === 0, `zero console errors (${consoleErrors.length ? consoleErrors.join(' | ') : 'clean'})`);
   console.log('\nCLOUD SMOKE PASSED');
 } catch (e) {

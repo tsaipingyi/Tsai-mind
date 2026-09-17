@@ -6,6 +6,8 @@ import type { AccountSettings, NotificationToggles, TokenSummary } from '../api/
 import { useSession } from '../state/session';
 import { toast } from '../state/toast';
 import { FIELD_LABEL, relTime } from '../lib/util';
+import { makeLock, rememberUnlocked, verifyLock } from '../lib/lock';
+import { useLock } from '../state/lock';
 
 const DEFAULT_NUDGE_TEMPLATE = '关于「{title}」，原定 {due}，现在进度 {progress}%，方便同步一下进展吗？';
 
@@ -31,6 +33,11 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [tokens, setTokens] = useState<TokenSummary[] | null>(null);
   const [tokenErr, setTokenErr] = useState<string | null>(null);
+  const lockNow = useLock((s) => s.lockNow);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pw1, setPw1] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [lockBusy, setLockBusy] = useState(false);
 
   useEffect(() => {
     if (!account) return;
@@ -79,6 +86,41 @@ export function SettingsPage() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /** writes (or clears) the page lock right away, separate from the main 保存 */
+  const saveLock = async (pageLock: AccountSettings['pageLock']) => {
+    if (!account) return;
+    setLockBusy(true);
+    const settings: AccountSettings = { ...account.settings, pageLock };
+    try {
+      const r = await api.patchMe({ settings });
+      const next = r?.account ?? { ...account, settings };
+      if (pageLock) rememberUnlocked(pageLock);
+      useSession.setState({ account: next });
+      setPwCurrent('');
+      setPw1('');
+      setPw2('');
+      toast(pageLock ? '页面密码已开启' : '页面密码已取消', 'ok');
+    } catch (e) {
+      toast(`保存失败：${errorMessage(e)}`, 'error');
+    } finally {
+      setLockBusy(false);
+    }
+  };
+  const enableLock = async () => {
+    if (!pw1 || pw1 !== pw2) return;
+    await saveLock(await makeLock(pw1));
+  };
+  const changeLock = async (remove: boolean) => {
+    const cur = account?.settings?.pageLock;
+    if (!cur) return;
+    if (!(await verifyLock(cur, pwCurrent))) {
+      toast('当前密码不对', 'error');
+      return;
+    }
+    if (remove) await saveLock(null);
+    else if (pw1 && pw1 === pw2) await saveLock(await makeLock(pw1));
   };
 
   const toggleKey = (k: KeyField) => setKeyFields(keyFields.includes(k) ? keyFields.filter((x) => x !== k) : [...keyFields, k]);
@@ -155,6 +197,58 @@ export function SettingsPage() {
           </label>
         ))}
       </div>
+
+      <h2>页面密码</h2>
+      <p className="faint" style={{ fontSize: 13, marginTop: 0 }}>
+        开启后每次打开页面都要先输入密码；密码只以加盐哈希保存，改密码或取消都要先输入当前密码。
+      </p>
+      {account.settings?.pageLock ? (
+        <div data-testid="page-lock">
+          <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>当前密码</span>
+              <input className="input" type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} aria-label="当前密码" />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>新密码</span>
+              <input className="input" type="password" autoComplete="new-password" value={pw1} onChange={(e) => setPw1(e.target.value)} aria-label="新密码" />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>再输一次</span>
+              <input className="input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} aria-label="再输一次新密码" />
+            </label>
+          </div>
+          {pw1 && pw2 && pw1 !== pw2 && <div className="red" style={{ fontSize: 13, marginBottom: 8 }}>两次输入的新密码不一样</div>}
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn primary" onClick={() => void changeLock(false)} disabled={lockBusy || !pwCurrent || !pw1 || pw1 !== pw2}>
+              更改密码
+            </button>
+            <button className="btn" onClick={() => void changeLock(true)} disabled={lockBusy || !pwCurrent}>
+              取消密码
+            </button>
+            <button className="btn" onClick={() => lockNow()} title="现在就锁上，再打开需要密码">
+              立即锁定
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div data-testid="page-lock">
+          <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>密码</span>
+              <input className="input" type="password" autoComplete="new-password" value={pw1} onChange={(e) => setPw1(e.target.value)} aria-label="页面密码" />
+            </label>
+            <label className="field" style={{ flex: 1, minWidth: 160 }}>
+              <span>再输一次</span>
+              <input className="input" type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} aria-label="再输一次页面密码" />
+            </label>
+          </div>
+          {pw1 && pw2 && pw1 !== pw2 && <div className="red" style={{ fontSize: 13, marginBottom: 8 }}>两次输入的密码不一样</div>}
+          <button className="btn primary" onClick={() => void enableLock()} disabled={lockBusy || !pw1 || pw1 !== pw2}>
+            开启页面密码
+          </button>
+        </div>
+      )}
 
       <h2>访问令牌</h2>
       {tokenErr && <div className="red">{tokenErr}</div>}

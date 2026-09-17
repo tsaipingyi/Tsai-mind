@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useSession } from '../state/session';
+import { useLock } from '../state/lock';
 import { useRealtime } from '../api/realtime';
 import { useIsPhone } from '../lib/useIsPhone';
 import { cloudStatusLabel, useCloudStatus } from '../lib/cloud';
@@ -22,6 +23,7 @@ export function Layout() {
   const phone = useIsPhone();
   const account = useSession((s) => s.account);
   const logout = useSession((s) => s.logout);
+  const lockNow = useLock((s) => s.lockNow);
   const connected = useRealtime((s) => s.connected);
   const attempted = useRealtime((s) => s.attempted);
   const nav = useNavigate();
@@ -56,6 +58,11 @@ export function Layout() {
             <i /> {connected ? '已连接' : attempted ? '未连接' : '连接中'}
           </span>
           <span className="name">{account?.name || account?.email || ''}</span>
+          {account?.settings?.pageLock && (
+            <button className="btn sm" onClick={() => lockNow()} title="锁定页面，再次打开需要密码">
+              锁定
+            </button>
+          )}
           <button
             className="btn sm"
             onClick={() => {
