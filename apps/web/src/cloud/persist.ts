@@ -50,6 +50,15 @@ function bytes(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
+/**
+ * Snapshot bodies are frozen (the runtime delivers them read-only, and the same object again when
+ * nothing changed); the in-page server mutates what it imports (pushes ops, edits contacts), so every
+ * import gets its own plain copy.
+ */
+function thaw(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return data === undefined ? undefined : (JSON.parse(JSON.stringify(data)) as Record<string, unknown>);
+}
+
 function errCode(e: unknown): string {
   const c = (e as DbError | undefined)?.code;
   return typeof c === 'string' ? c : 'unavailable';
@@ -290,7 +299,7 @@ export class CloudPersister {
   }
 
   private importAccount(snap: DocumentSnapshot): void {
-    const data = snap.data();
+    const data = thaw(snap.data());
     if (!data) return;
     this.server.importAccountDoc(data);
     setCloudStatus({ firstRun: data.firstRun === true });
@@ -298,21 +307,21 @@ export class CloudPersister {
   }
 
   private importContacts(snap: DocumentSnapshot): void {
-    const data = snap.data();
+    const data = thaw(snap.data());
     if (!data) return;
     this.server.importContactsDoc(data);
     this.remember(CLOUD_DOCS.contacts, data);
   }
 
   private importProject(snap: DocumentSnapshot): void {
-    const data = snap.data();
+    const data = thaw(snap.data());
     if (!data) return;
     this.server.importProjectDoc(data as unknown as ProjectDoc);
     this.remember(`${CLOUD_DOCS.projects}/${snap.id}`, data);
   }
 
   private importChat(snap: DocumentSnapshot): void {
-    const data = snap.data();
+    const data = thaw(snap.data());
     if (!data) return;
     this.server.importChatDoc(data as unknown as ChatDoc);
     this.remember(`${CLOUD_DOCS.chats}/${snap.id}`, data);

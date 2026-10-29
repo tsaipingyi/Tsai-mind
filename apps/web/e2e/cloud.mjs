@@ -41,13 +41,18 @@ function fakeClaude(cfg) {
   const docs = load();
   const persist = () => localStorage.setItem(KEY, JSON.stringify(docs));
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  // the real runtime delivers snapshot bodies frozen: a page that mutates them must copy first
+  const deepFreeze = (v) => {
+    if (v && typeof v === 'object') for (const k of Object.keys(v)) deepFreeze(v[k]);
+    return v && typeof v === 'object' ? Object.freeze(v) : v;
+  };
   const listeners = new Set();
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const inCol = (col, path) => path.startsWith(col + '/') && !path.slice(col.length + 1).includes('/');
   const colDocs = (col) => Object.keys(docs).filter((p) => inCol(col, p)).sort();
   const docSnap = (path, pending, dataOverride) => {
     const data = dataOverride !== undefined ? dataOverride : docs[path];
-    return { id: path.split('/').pop(), exists: data !== undefined, data: () => clone(data), metadata: { fromCache: false, hasPendingWrites: pending } };
+    return { id: path.split('/').pop(), exists: data !== undefined, data: () => deepFreeze(clone(data)), metadata: { fromCache: false, hasPendingWrites: pending } };
   };
   const colSnap = (l, pending, changedPath, removedData) => {
     const ids = colDocs(l.path);
