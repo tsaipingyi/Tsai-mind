@@ -15,7 +15,8 @@ export interface Toast {
 
 interface ToastState {
   toasts: Toast[];
-  push: (text: string, kind?: Toast['kind'], ms?: number, actions?: ToastAction[]) => void;
+  /** returns the toast id (for an early `dismiss`) */
+  push: (text: string, kind?: Toast['kind'], ms?: number, actions?: ToastAction[]) => number;
   dismiss: (id: number) => void;
 }
 
@@ -28,6 +29,7 @@ export const useToasts = create<ToastState>((set, get) => ({
     set({ toasts: [...get().toasts, { id, text, kind, actions }] });
     const ttl = ms ?? (actions?.length ? 15000 : kind === 'error' ? 6000 : text.length > 60 ? 8000 : 3500);
     setTimeout(() => get().dismiss(id), ttl);
+    return id;
   },
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
 }));

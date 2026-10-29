@@ -28,6 +28,7 @@ export function installCloud(server: DemoServer): Promise<void> {
     exportOutline,
     status: () => useCloudStatus.getState(),
     flush: () => cloudPersister()?.flushAll(),
+    retryAccess: () => cloudPersister()?.retryAccess(),
     ready,
   };
   return ready;

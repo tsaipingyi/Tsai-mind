@@ -2000,6 +2000,14 @@ label.field > span,
   color: var(--red);
   border-color: var(--red);
 }
+button.cloud-pill {
+  background: var(--paper);
+  font: inherit;
+  cursor: pointer;
+}
+button.cloud-pill:hover {
+  background: #fff1ee;
+}
 
 /* ---------- shell ---------- */
 .phone-app {

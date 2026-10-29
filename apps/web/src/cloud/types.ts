@@ -123,8 +123,22 @@ export interface Downloads {
   save(request: { filename: string; data: string | Blob | ArrayBuffer | ArrayBufferView }): Promise<{ status: 'saved' | 'delivered' }>;
 }
 
+// ---- permissions (built in; never declared) ----
+
+export type PermissionState = 'granted' | 'prompt' | 'denied' | 'unavailable';
+
+export interface Permissions {
+  /** reads without prompting; an unknown name answers 'unavailable' */
+  state(name: string): Promise<PermissionState>;
+  /** asks the viewer with at most one dialog; never rejects on a "no" */
+  request(names?: readonly string[]): Promise<Record<string, PermissionState>>;
+  /** opens the platform's Permissions panel; resolves when it closes */
+  manage(): Promise<void>;
+}
+
 export interface CapabilityMap {
   db: DB;
   sample: Sample;
   downloads: Downloads;
+  permissions: Permissions;
 }

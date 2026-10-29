@@ -3,17 +3,28 @@ import { useSession } from '../state/session';
 import { useLock } from '../state/lock';
 import { useRealtime } from '../api/realtime';
 import { useIsPhone } from '../lib/useIsPhone';
-import { cloudStatusLabel, useCloudStatus } from '../lib/cloud';
+import { CLOUD_RETRY_EVENT, cloudStatusLabel, useCloudStatus } from '../lib/cloud';
 import { TabBar } from './TabBar';
 
-/** Small text pill for the cloud-persistence state; renders nothing when cloud mode is not in the build. */
+/**
+ * Small text pill for the cloud-persistence state; renders nothing when cloud mode is not in the build.
+ * Offline it is a button: clicking it makes cloud mode re-check its access (and explain again).
+ */
 export function CloudStatusPill({ className }: { className?: string }) {
   const status = useCloudStatus();
   if (!status) return null;
   const label = cloudStatusLabel(status);
   if (!label) return null;
+  const cls = `cloud-pill ${status.state}${className ? ` ${className}` : ''}`;
+  if (status.state === 'offline') {
+    return (
+      <button type="button" className={cls} data-cloud-status={status.state} data-testid="cloud-status" title={status.message} onClick={() => window.dispatchEvent(new Event(CLOUD_RETRY_EVENT))}>
+        {label}
+      </button>
+    );
+  }
   return (
-    <span className={`cloud-pill ${status.state}${className ? ` ${className}` : ''}`} data-cloud-status={status.state} data-testid="cloud-status" title={status.message}>
+    <span className={cls} data-cloud-status={status.state} data-testid="cloud-status" title={status.message}>
       {label}
     </span>
   );

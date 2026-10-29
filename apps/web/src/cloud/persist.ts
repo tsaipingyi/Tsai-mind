@@ -15,14 +15,24 @@
  * knows replaces the in-memory state and reloads the open project.
  */
 import type { ChatDoc, DemoServer, DirtyKind, ProjectDoc } from '../demo/mockApi';
+import { CLOUD_RETRY_EVENT } from '../lib/cloud';
 import { useProject } from '../state/project';
-import { toast } from '../state/toast';
-import { useCapability } from './capabilities';
+import { toast, useToasts } from '../state/toast';
+import { hasClaudeRuntime, useCapability } from './capabilities';
 import { createLocalDb, localStorageAvailable } from './localDb';
 import { CLOUD_DOCS } from './mode';
 import { STARTER_OUTLINE, STARTER_PROJECT_NAME } from './seed';
-import { LOCAL_MESSAGE, OFFLINE_MESSAGE, setCloudStatus, useCloudStatus } from './status';
-import type { DB, DbError, DocumentSnapshot, QuerySnapshot } from './types';
+import {
+  LOCAL_MESSAGE,
+  OFFLINE_BROKEN_MESSAGE,
+  OFFLINE_DENIED_MESSAGE,
+  OFFLINE_MESSAGE,
+  OFFLINE_NO_STORAGE_MESSAGE,
+  OFFLINE_PROMPT_MESSAGE,
+  setCloudStatus,
+  useCloudStatus,
+} from './status';
+import type { DB, DbError, DocumentSnapshot, PermissionState, Permissions, QuerySnapshot } from './types';
 
 const DEBOUNCE_MS = 400;
 const MAX_DOC_BYTES = 240 * 1024;
@@ -87,15 +97,21 @@ export class CloudPersister {
   async boot(): Promise<void> {
     this.server.onDirty = (kind, id) => this.markDirty(kind, id);
     let db = await useCapability('db');
+    if (!db && hasClaudeRuntime()) {
+      // a Claude viewer that did not hand over `db`: find out why before falling back
+      const why = await this.dbAccess();
+      if (why !== 'unavailable') {
+        await this.goOffline(why);
+        return;
+      }
+    }
     if (!db && localStorageAvailable()) {
       // outside the claude.ai viewer (a static host, a saved file): keep the data in this browser
       db = createLocalDb();
       this.local = true;
     }
     if (!db) {
-      await this.seedStarter();
-      setCloudStatus({ state: 'offline', message: OFFLINE_MESSAGE, firstRun: true });
-      this.booted = true;
+      await this.goOffline(hasClaudeRuntime() ? 'unavailable' : 'no_storage');
       return;
     }
     this.db = db;
@@ -116,6 +132,112 @@ export class CloudPersister {
     this.installFlushHooks();
     this.booted = true;
     if (!this.hasError) setCloudStatus({ state: this.local ? 'local' : 'ready', message: this.local ? LOCAL_MESSAGE : undefined });
+  }
+
+  // ----- offline: why, and the way back -----
+
+  private permissions: Permissions | null = null;
+
+  /**
+   * Why a Claude viewer gave no `db`: the viewer's permission state for it. 'unavailable' also covers
+   * a runtime that cannot answer (the platform's top-level host, an older viewer) — the caller then
+   * falls back like outside a viewer.
+   */
+  private async dbAccess(): Promise<PermissionState> {
+    this.permissions = await useCapability('permissions');
+    if (!this.permissions) return 'unavailable';
+    try {
+      return await this.permissions.state('db');
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  private async goOffline(why: PermissionState | 'no_storage'): Promise<void> {
+    await this.seedStarter();
+    this.booted = true;
+    const message =
+      why === 'denied' ? OFFLINE_DENIED_MESSAGE
+      : why === 'prompt' ? OFFLINE_PROMPT_MESSAGE
+      : why === 'granted' ? OFFLINE_BROKEN_MESSAGE
+      : why === 'no_storage' ? OFFLINE_NO_STORAGE_MESSAGE
+      : OFFLINE_MESSAGE;
+    setCloudStatus({ state: 'offline', message, firstRun: true });
+    window.addEventListener(CLOUD_RETRY_EVENT, () => void this.retryAccess());
+    if (why === 'prompt') {
+      // ask once, without holding the boot (the dialog can stay open as long as the viewer likes);
+      // a grant only takes effect on a fresh load
+      void this.askForDb();
+    } else if (why === 'denied' || why === 'granted') this.offerFix(why);
+  }
+
+  private async askForDb(): Promise<boolean> {
+    if (!this.permissions) return false;
+    try {
+      const r = await this.permissions.request(['db']);
+      if (r.db === 'granted') {
+        location.reload();
+        return true;
+      }
+      if (r.db === 'denied') {
+        setCloudStatus({ state: 'offline', message: OFFLINE_DENIED_MESSAGE });
+        this.offerFix('denied');
+      }
+    } catch {
+      /* the viewer could not ask; the pill keeps the explanation */
+    }
+    return false;
+  }
+
+  private fixToast: number | null = null;
+
+  private offerFix(why: 'denied' | 'granted'): void {
+    const toasts = useToasts.getState();
+    if (this.fixToast !== null) toasts.dismiss(this.fixToast);
+    const text = why === 'denied' ? '这个页面的「云端存储」权限被关掉了，改动不会保存。' : '云端存储没有加载出来，改动不会保存。';
+    const action =
+      why === 'denied' && this.permissions
+        ? { label: '打开权限设置', primary: true, run: () => void this.openPermissions() }
+        : { label: '刷新页面', primary: true, run: () => location.reload() };
+    this.fixToast = toasts.push(text, 'error', 60_000, [action]);
+  }
+
+  /** Opens the viewer's Permissions panel; when it closes with db allowed, reloads to pick it up. */
+  private async openPermissions(): Promise<void> {
+    if (this.fixToast !== null) useToasts.getState().dismiss(this.fixToast);
+    this.fixToast = null;
+    if (!this.permissions) return;
+    try {
+      await this.permissions.manage();
+    } catch {
+      toast('打不开权限面板：请在页面右上角的菜单里找到「权限」，重新允许云端存储，再刷新页面', 'error', 10_000);
+      return;
+    }
+    await this.retryAccess();
+  }
+
+  /** Re-checks db access (the pill was clicked, or the permissions panel closed). */
+  async retryAccess(): Promise<void> {
+    if (this.db) return;
+    const why = hasClaudeRuntime() ? await this.dbAccess() : 'unavailable';
+    if (why === 'granted') {
+      // granted now: a fresh load is the only way to obtain the namespace
+      location.reload();
+      return;
+    }
+    if (why === 'prompt') {
+      await this.askForDb();
+      return;
+    }
+    if (why === 'denied') {
+      setCloudStatus({ state: 'offline', message: OFFLINE_DENIED_MESSAGE });
+      this.offerFix('denied');
+      return;
+    }
+    // nothing to ask here: repeat the explanation and leave a reload to the viewer
+    const toasts = useToasts.getState();
+    if (this.fixToast !== null) toasts.dismiss(this.fixToast);
+    this.fixToast = toasts.push(useCloudStatus.getState().message ?? OFFLINE_MESSAGE, 'error', 15_000, [{ label: '刷新页面', run: () => location.reload() }]);
   }
 
   private async failBoot(e: unknown): Promise<void> {

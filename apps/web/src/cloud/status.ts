@@ -31,6 +31,10 @@ export const CLOUD_STATE_LABEL: Record<CloudState, string> = {
 };
 
 export const OFFLINE_MESSAGE = '这个页面没有拿到云端存储，数据只在本页内存里，刷新就没了。';
+export const OFFLINE_DENIED_MESSAGE = '这个页面的「云端存储」权限被关掉了，改动不会保存。点击状态标打开权限设置，重新允许后页面会自动刷新。';
+export const OFFLINE_PROMPT_MESSAGE = '需要允许这个页面使用云端存储，改动才会保存。';
+export const OFFLINE_BROKEN_MESSAGE = '云端存储没有加载出来，改动不会保存。刷新页面再试一次。';
+export const OFFLINE_NO_STORAGE_MESSAGE = '浏览器不允许这个网站保存数据（无痕窗口或隐私设置），改动只在本页内存里，刷新就没了。';
 export const LOCAL_MESSAGE = '这个页面不在 claude.ai 里打开，数据只存在这个浏览器里，不会同步到别的设备。';
 
 export const useCloudStatus = create<CloudStatus>(() => ({ state: 'loading', message: undefined, firstRun: false, savedAt: null, saved: false }));

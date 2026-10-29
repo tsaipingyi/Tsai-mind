@@ -195,18 +195,43 @@ function fakeClaude(cfg) {
     },
   };
 
-  const ns = { db, sample, downloads };
+  // ---- permissions ----
+  // cfg.db: true (served + granted) | false (not served, no permissions: a static host) |
+  //   'denied' | 'prompt' | 'broken' (granted but the module never loads). A grant made through
+  //   `request` / `manage` is remembered in localStorage so the next load serves db.
+  const GRANT = 'fake.granted';
+  const granted = () => cfg.db === true || ((cfg.db === 'prompt' || cfg.db === 'denied') && localStorage.getItem(GRANT) === '1');
+  window.__permCalls = [];
+  const permissions = {
+    state: async (name) => {
+      window.__permCalls.push(['state', name]);
+      if (name !== 'db') return 'unavailable';
+      if (granted()) return 'granted';
+      return cfg.db === 'broken' ? 'granted' : cfg.db === 'denied' ? 'denied' : cfg.db === 'prompt' ? 'prompt' : 'unavailable';
+    },
+    request: async (names) => {
+      window.__permCalls.push(['request', names]);
+      if (cfg.db === 'prompt') localStorage.setItem(GRANT, '1');
+      return { db: await permissions.state('db') };
+    },
+    manage: async () => {
+      window.__permCalls.push(['manage']);
+      if (cfg.db === 'denied') localStorage.setItem(GRANT, '1');
+    },
+  };
+
+  const ns = { db: granted() ? db : null, sample, downloads, permissions: cfg.db === false ? null : permissions };
   const memo = new Map();
   window.claude = {
     use: (name) => {
-      if (!memo.has(name)) memo.set(name, new Promise((r) => setTimeout(() => r(cfg[name] === false ? null : (ns[name] ?? null)), 40)));
+      if (!memo.has(name)) memo.set(name, new Promise((r) => setTimeout(() => r(ns[name] ?? null), 40)));
       return memo.get(name);
     },
   };
 }
 
 // ---- helpers ----
-const cloudState = (page) => page.evaluate(() => window.tsaimindCloud?.status().state);
+const cloudState = (page) => page.evaluate(() => window.tsaimindCloud?.status().state).catch(() => undefined); // undefined while the page navigates
 const waitState = async (page, want, timeout = 15000) => {
   const t0 = Date.now();
   for (;;) {
@@ -459,8 +484,59 @@ try {
   await waitState(page, 'local');
   assert((await page.getByTestId('lock-screen').count()) === 0, 'lock: after 取消密码 the page opens without asking');
 
+
+  // ---- db permission switched off in the viewer: offline, explained, and a button to the Permissions panel ----
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(fakeClaude, { db: 'denied' });
+  page = await context.newPage();
+  attach(page);
+  await page.goto(URL_);
+  await waitState(page, 'offline');
+  const denied = await page.evaluate(() => window.tsaimindCloud.status());
+  assert(/权限/.test(denied.message ?? ''), `denied: the message names the permission: ${denied.message}`);
+  const deniedPill = page.locator('[data-testid="cloud-status"]').first();
+  assert(/离线/.test((await deniedPill.innerText()).trim()), 'denied: the pill says 离线');
+  const fixBtn = page.getByRole('button', { name: '打开权限设置' });
+  await fixBtn.waitFor({ timeout: 5000 });
+  assert(true, 'denied: a toast offers 打开权限设置');
+  assert((await page.evaluate(() => window.__permCalls.map((c) => c[0]))).join(',') === 'state', 'denied: only permissions.state was called (no request, no nagging)');
+  await fixBtn.click();
+  // the fake panel re-allows db; the page re-checks, sees granted, and reloads into a working store
+  await waitState(page, 'ready', 15000);
+  assert(true, 'denied: after the panel closes with db allowed, the page reloads and reaches ready');
+  await page.getByRole('heading', { name: '今天', exact: true }).waitFor({ timeout: 15000 });
+
+  // ---- db needs allowing: the page asks once at boot, and a grant takes effect on the reload ----
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(fakeClaude, { db: 'prompt' });
+  page = await context.newPage();
+  attach(page);
+  await page.goto(URL_);
+  await waitState(page, 'ready', 15000);
+  assert(true, 'prompt: request → granted → reload → ready');
+  assert(await page.evaluate(() => localStorage.getItem('fake.granted') === '1'), 'prompt: the grant was asked for through permissions.request');
+
+  // ---- granted but the module never loaded: offline with a reload offer ----
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(fakeClaude, { db: 'broken' });
+  page = await context.newPage();
+  attach(page);
+  await page.goto(URL_);
+  await waitState(page, 'offline');
+  const broken = await page.evaluate(() => window.tsaimindCloud.status());
+  assert(/刷新/.test(broken.message ?? ''), `broken: the message suggests a reload: ${broken.message}`);
+  await page.getByRole('button', { name: '刷新页面' }).waitFor({ timeout: 5000 });
+  assert(true, 'broken: a toast offers 刷新页面');
+  // clicking the pill re-checks: still granted-but-absent, so the page reloads and explains again
+  await page.evaluate(() => localStorage.setItem('fake.before', '1'));
+  await page.locator('[data-testid="cloud-status"]').first().click();
+  await waitState(page, 'offline', 15000);
+  await page.getByRole('button', { name: '刷新页面' }).waitFor({ timeout: 5000 });
+  assert(await page.evaluate(() => window.__permCalls.map((c) => c[0]).join(',')) === 'state', 'broken: clicking the pill reloaded the page (fresh runtime, one state check) and the offer is back');
+
   assert(consoleErrors.length === 0, `zero console errors (${consoleErrors.length ? consoleErrors.join(' | ') : 'clean'})`);
   console.log('\nCLOUD SMOKE PASSED');
+
 } catch (e) {
   await page.screenshot({ path: 'e2e/out/cloud-failure.png' }).catch(() => undefined);
   console.error('\nCLOUD SMOKE FAILED:', e.message);

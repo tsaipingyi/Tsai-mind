@@ -61,5 +61,8 @@ export function cloudStatusLabel(s: CloudStatus): string {
   }
 }
 
+/** Dispatched on `window` by the status pill when it is clicked while offline: cloud mode re-checks its access. */
+export const CLOUD_RETRY_EVENT = 'tsaimind:cloud-retry';
+
 /** The custom event cloud mode fires after it pulls a newer copy of a project (`detail.projectId`). */
 export const PROJECT_CHANGED_EVENT = 'tsaimind:project-changed';
